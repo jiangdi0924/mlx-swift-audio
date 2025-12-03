@@ -42,7 +42,7 @@ final class AppState {
   var error: TTSError? { engineManager.error }
   var generationTime: TimeInterval { engineManager.generationTime }
   var lastGeneratedAudioURL: URL? { engineManager.lastGeneratedAudioURL }
-  var supportsStreaming: Bool { selectedProvider == .marvis }
+  var supportsStreaming: Bool { engineManager.currentEngine is StreamingTTSEngine }
 
   var canGenerate: Bool {
     isLoaded && !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isGenerating
@@ -96,7 +96,7 @@ final class AppState {
     }
   }
 
-  /// Generate with streaming (Marvis only)
+  /// Generate with streaming (Kokoro and Marvis)
   func generateStreaming() async {
     guard canGenerate else { return }
     guard supportsStreaming else {
@@ -112,7 +112,7 @@ final class AppState {
       var sampleRate = 0
       var totalProcessingTime: TimeInterval = 0
 
-      for try await chunk in engineManager.generateStreaming(text: inputText) {
+      for try await chunk in engineManager.generateStreaming(text: inputText, speed: speed) {
         if stopRequested { break }
         allSamples.append(contentsOf: chunk.samples)
         sampleRate = chunk.sampleRate

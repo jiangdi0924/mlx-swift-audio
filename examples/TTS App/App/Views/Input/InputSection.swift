@@ -36,8 +36,8 @@ struct InputSection: View {
         },
       )
 
-      // Streaming option for Marvis
-      if appState.selectedProvider.supportsStreaming {
+      // Streaming option for supported engines
+      if appState.supportsStreaming {
         Button {
           Task {
             if !appState.isLoaded {

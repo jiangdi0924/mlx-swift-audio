@@ -170,7 +170,7 @@ public actor OrpheusTTS {
     return OrpheusTTS(model: model, snacDecoder: snacDecoder, tokenizer: tokenizer)
   }
 
-  func generateAudio(voice: Voice, text: String, temperature: Float = 0.6, topP: Float = 0.8) async throws -> [Float] {
+  func generateAudio(voice: Voice, text: String, temperature: Float = 0.6, topP: Float = 0.8) throws -> [Float] {
     let totalGenerationStart = CFAbsoluteTimeGetCurrent()
 
     // Prepare input with voice prefix

@@ -287,7 +287,7 @@ actor OuteTTSSession {
   ) async throws -> OuteTTSSpeakerProfile? {
     // Load from file
     if let path = voicePath {
-      return try audioProcessor?.loadSpeaker(from: path)
+      return try await audioProcessor?.loadSpeaker(from: path)
     }
 
     // Create from reference audio
@@ -304,7 +304,7 @@ actor OuteTTSSession {
   }
 
   /// Generate audio from text
-  func generate(
+  func generateAudio(
     text: String,
     speaker: OuteTTSSpeakerProfile? = nil,
     temperature: Float? = nil,

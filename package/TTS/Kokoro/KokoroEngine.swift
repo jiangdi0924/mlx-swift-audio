@@ -12,7 +12,7 @@ import Foundation
 /// Kokoro TTS engine - fast, lightweight TTS with many voice options
 @Observable
 @MainActor
-public final class KokoroEngine: TTSEngine {
+public final class KokoroEngine: TTSEngine, StreamingTTSEngine {
   // MARK: - TTSEngine Protocol Properties
 
   public let provider: TTSProvider = .kokoro
@@ -86,12 +86,12 @@ public final class KokoroEngine: TTSEngine {
   /// Generate audio from text
   /// - Parameters:
   ///   - text: The text to synthesize
-  ///   - voice: The voice to use (default: .afHeart)
+  ///   - voice: The voice to use
   ///   - speed: Playback speed multiplier (default: 1.0)
   /// - Returns: The generated audio result
   public func generate(
     _ text: String,
-    voice: KokoroTTS.Voice = .afHeart,
+    voice: KokoroTTS.Voice,
     speed: Float = 1.0,
   ) async throws -> AudioResult {
     if !isLoaded {
@@ -161,11 +161,11 @@ public final class KokoroEngine: TTSEngine {
   /// Generate and immediately play audio
   /// - Parameters:
   ///   - text: The text to synthesize
-  ///   - voice: The voice to use (default: .afHeart)
+  ///   - voice: The voice to use
   ///   - speed: Playback speed multiplier (default: 1.0)
   public func say(
     _ text: String,
-    voice: KokoroTTS.Voice = .afHeart,
+    voice: KokoroTTS.Voice,
     speed: Float = 1.0,
   ) async throws {
     let audio = try await generate(text, voice: voice, speed: speed)
@@ -176,80 +176,118 @@ public final class KokoroEngine: TTSEngine {
 
   // MARK: - Streaming
 
-  /// Generate audio with streaming playback (audio plays as it generates)
+  /// Generate audio as a stream of chunks (no playback)
   /// - Parameters:
   ///   - text: The text to synthesize
-  ///   - voice: The voice to use (default: .afHeart)
+  ///   - voice: The voice to use
   ///   - speed: Playback speed multiplier (default: 1.0)
-  /// - Returns: The generated audio result
-  public func generateWithStreaming(
+  /// - Returns: An async stream of audio chunks
+  public func generateStreaming(
     _ text: String,
-    voice: KokoroTTS.Voice = .afHeart,
+    voice: KokoroTTS.Voice,
     speed: Float = 1.0,
-  ) async throws -> AudioResult {
-    if !isLoaded {
-      try await load()
+  ) -> AsyncThrowingStream<AudioChunk, Error> {
+    let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    guard !trimmedText.isEmpty else {
+      return AsyncThrowingStream { $0.finish(throwing: TTSError.invalidArgument("Text cannot be empty")) }
     }
 
-    guard let kokoroTTS, let audioPlayer else {
+    guard isLoaded else {
+      return AsyncThrowingStream { $0.finish(throwing: TTSError.modelNotLoaded) }
+    }
+
+    return AsyncThrowingStream { continuation in
+      Task { @MainActor [weak self] in
+        guard let self else {
+          continuation.finish()
+          return
+        }
+
+        guard let kokoroTTS else {
+          continuation.finish(throwing: TTSError.modelNotLoaded)
+          return
+        }
+
+        isGenerating = true
+        generationTime = 0
+
+        let startTime = Date()
+        var isFirst = true
+
+        do {
+          for try await samples in try await kokoroTTS.generateAudioStream(
+            voice: voice,
+            text: trimmedText,
+            speed: speed,
+          ) {
+            if isFirst {
+              generationTime = Date().timeIntervalSince(startTime)
+              isFirst = false
+            }
+
+            let chunk = AudioChunk(
+              samples: samples,
+              sampleRate: TTSConstants.Audio.kokoroSampleRate,
+              isLast: false,
+              processingTime: Date().timeIntervalSince(startTime),
+            )
+            continuation.yield(chunk)
+          }
+
+          isGenerating = false
+          continuation.finish()
+
+        } catch {
+          isGenerating = false
+          Log.tts.error("Kokoro streaming failed: \(error.localizedDescription)")
+          continuation.finish(throwing: TTSError.generationFailed(underlying: error))
+        }
+      }
+    }
+  }
+
+  /// Play audio with streaming (plays as chunks arrive)
+  /// - Parameters:
+  ///   - text: The text to synthesize
+  ///   - voice: The voice to use
+  ///   - speed: Playback speed multiplier (default: 1.0)
+  public func sayStreaming(
+    _ text: String,
+    voice: KokoroTTS.Voice,
+    speed: Float = 1.0,
+  ) async throws {
+    guard let audioPlayer else {
       throw TTSError.modelNotLoaded
     }
 
-    let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmedText.isEmpty else {
-      throw TTSError.invalidArgument("Text cannot be empty")
-    }
-
-    generationTask?.cancel()
-    isGenerating = true
     isPlaying = true
-    generationTime = 0
-
-    let startTime = Date()
     var allSamples: [Float] = []
-    var firstChunkTime: TimeInterval = 0
 
     do {
-      for try await samples in try await kokoroTTS.generateAudioStream(
-        voice: voice,
-        text: trimmedText,
-        speed: speed,
-      ) {
-        if firstChunkTime == 0 {
-          firstChunkTime = Date().timeIntervalSince(startTime)
-          generationTime = firstChunkTime
-        }
-
-        allSamples.append(contentsOf: samples)
-        audioPlayer.enqueue(samples: samples, prebufferSeconds: 0)
+      for try await chunk in generateStreaming(text, voice: voice, speed: speed) {
+        allSamples.append(contentsOf: chunk.samples)
+        audioPlayer.enqueue(samples: chunk.samples, prebufferSeconds: 0)
       }
-
-      isGenerating = false
 
       await audioPlayer.awaitCompletion()
       isPlaying = false
 
-      do {
-        let fileURL = try AudioFileWriter.save(
-          samples: allSamples,
-          sampleRate: TTSConstants.Audio.kokoroSampleRate,
-          filename: TTSConstants.FileNames.kokoroOutput.replacingOccurrences(of: ".wav", with: ""),
-        )
-        lastGeneratedAudioURL = fileURL
-      } catch {
-        Log.audio.error("Failed to save audio file: \(error.localizedDescription)")
+      if !allSamples.isEmpty {
+        do {
+          let fileURL = try AudioFileWriter.save(
+            samples: allSamples,
+            sampleRate: TTSConstants.Audio.kokoroSampleRate,
+            filename: TTSConstants.FileNames.kokoroOutput.replacingOccurrences(of: ".wav", with: ""),
+          )
+          lastGeneratedAudioURL = fileURL
+        } catch {
+          Log.audio.error("Failed to save audio file: \(error.localizedDescription)")
+        }
       }
-
-      return .samples(
-        data: allSamples,
-        sampleRate: TTSConstants.Audio.kokoroSampleRate,
-        processingTime: generationTime,
-      )
-
     } catch {
-      isGenerating = false
       isPlaying = false
-      throw TTSError.generationFailed(underlying: error)
+      throw error
     }
   }
 }

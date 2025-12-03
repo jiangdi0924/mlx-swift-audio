@@ -369,14 +369,14 @@ class OuteTTSAudioProcessor {
   }
 
   /// Save speaker profile to file
-  func saveSpeaker(_ speaker: OuteTTSSpeakerProfile, to path: String) throws {
-    try speaker.save(to: path)
+  func saveSpeaker(_ speaker: OuteTTSSpeakerProfile, to path: String) async throws {
+    try await speaker.save(to: path)
     print("Speaker saved to: \(path)")
   }
 
   /// Load speaker profile from file
-  func loadSpeaker(from path: String) throws -> OuteTTSSpeakerProfile {
-    try OuteTTSSpeakerProfile.load(from: path)
+  func loadSpeaker(from path: String) async throws -> OuteTTSSpeakerProfile {
+    try await OuteTTSSpeakerProfile.load(from: path)
   }
 }
 

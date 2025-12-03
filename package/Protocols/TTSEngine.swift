@@ -11,6 +11,10 @@ import Foundation
 ///
 /// Voice selection and generation are engine-specific since each engine
 /// has different voice types (enums, speaker profiles with reference audio, etc.)
+///
+/// TODO: Evaluate configuration approach when adding more engines.
+/// Currently: Kokoro passes `speed` to methods, other engines use mutable properties
+/// (temperature, topP, qualityLevel, etc.). Consider unifying if a clear pattern emerges.
 @MainActor
 public protocol TTSEngine: Observable {
   /// The provider type for this engine
@@ -54,6 +58,12 @@ public extension TTSEngine {
     try await load(progressHandler: nil)
   }
 }
+
+/// Marker protocol for engines that support streaming generation.
+///
+/// Engines conforming to this protocol provide `generateStreaming` and `sayStreaming` methods.
+/// Method signatures are engine-specific due to different voice types.
+public protocol StreamingTTSEngine: TTSEngine {}
 
 /// A chunk of audio data for streaming playback
 public struct AudioChunk: Sendable {

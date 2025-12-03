@@ -120,7 +120,7 @@ public final class OuteTTSEngine: TTSEngine {
     let startTime = Date()
 
     do {
-      let result = try await outeTTS.generate(
+      let result = try await outeTTS.generateAudio(
         text: trimmedText,
         speaker: speaker,
         temperature: temperature,
@@ -179,7 +179,7 @@ public final class OuteTTSEngine: TTSEngine {
   /// Load a speaker profile from a JSON file
   /// - Parameter path: Path to the speaker profile JSON file
   /// - Returns: The loaded speaker profile
-  public static func loadSpeaker(from path: String) throws -> OuteTTSSpeakerProfile {
-    try OuteTTSSpeakerProfile.load(from: path)
+  public static func loadSpeaker(from path: String) async throws -> OuteTTSSpeakerProfile {
+    try await OuteTTSSpeakerProfile.load(from: path)
   }
 }

@@ -142,25 +142,27 @@ public struct OuteTTSSpeakerProfile: Codable, Sendable {
   }
 
   /// Load speaker profile from JSON file
-  static func load(from path: String) throws -> OuteTTSSpeakerProfile {
+  static func load(from path: String) async throws -> OuteTTSSpeakerProfile {
     let expandedPath = NSString(string: path).expandingTildeInPath
     let url = URL(fileURLWithPath: expandedPath)
-    let data = try Data(contentsOf: url)
-    return try JSONDecoder().decode(OuteTTSSpeakerProfile.self, from: data)
+    return try await Task.detached {
+      let data = try Data(contentsOf: url)
+      return try JSONDecoder().decode(OuteTTSSpeakerProfile.self, from: data)
+    }.value
   }
 
   /// Save speaker profile to JSON file
-  func save(to path: String) throws {
+  func save(to path: String) async throws {
     let expandedPath = NSString(string: path).expandingTildeInPath
     let url = URL(fileURLWithPath: expandedPath)
-
-    // Create directory if needed
-    let directory = url.deletingLastPathComponent()
-    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-
     let encoder = JSONEncoder()
     encoder.outputFormatting = .prettyPrinted
     let data = try encoder.encode(self)
-    try data.write(to: url)
+    try await Task.detached {
+      // Create directory if needed
+      let directory = url.deletingLastPathComponent()
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+      try data.write(to: url)
+    }.value
   }
 }

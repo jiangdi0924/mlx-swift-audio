@@ -16,26 +16,27 @@ actor MarvisTTSSession {
   var isInitialized: Bool { tts != nil }
 
   func initialize(
-    voice: MarvisTTS.Voice,
     modelRepoId: String,
     progressHandler: @escaping @Sendable (Progress) -> Void,
-    playbackEnabled: Bool,
   ) async throws {
-    tts = try await MarvisTTS(
-      voice: voice,
-      model: modelRepoId,
+    tts = try await MarvisTTS.fromPretrained(
+      repoId: modelRepoId,
       progressHandler: progressHandler,
-      playbackEnabled: playbackEnabled,
     )
   }
 
-  func generate(text: String, quality: MarvisTTS.QualityLevel) throws -> MarvisTTS.GenerationResult {
+  func generate(
+    text: String,
+    voice: MarvisTTS.Voice,
+    quality: MarvisTTS.QualityLevel,
+  ) throws -> MarvisTTS.GenerationResult {
     guard let tts else { throw TTSError.modelNotLoaded }
-    return try tts.generateSync(text: text, quality: quality)
+    return try tts.generateAudio(text: text, voice: voice, quality: quality)
   }
 
   func generateStreaming(
     text: String,
+    voice: MarvisTTS.Voice,
     quality: MarvisTTS.QualityLevel,
     interval: Double,
   ) throws -> AsyncThrowingStream<MarvisTTS.GenerationResult, Error> {
@@ -43,8 +44,9 @@ actor MarvisTTSSession {
 
     return AsyncThrowingStream { continuation in
       do {
-        try tts.generateStreamingSync(
+        try tts.generateAudioStream(
           text: text,
+          voice: voice,
           quality: quality,
           interval: interval,
         ) { result in
@@ -68,11 +70,9 @@ actor MarvisTTSSession {
 }
 
 /// Marvis TTS engine - advanced conversational TTS with streaming support
-///
-/// Note: Voice is set at load time and cannot be changed without reloading.
 @Observable
 @MainActor
-public final class MarvisEngine: TTSEngine {
+public final class MarvisEngine: TTSEngine, StreamingTTSEngine {
   // MARK: - TTSEngine Protocol Properties
 
   public let provider: TTSProvider = .marvis
@@ -98,7 +98,6 @@ public final class MarvisEngine: TTSEngine {
   @ObservationIgnored private let session = MarvisTTSSession()
   @ObservationIgnored private var audioPlayer: AudioSamplePlayer?
   @ObservationIgnored private var generationTask: Task<Void, Never>?
-  @ObservationIgnored private var loadedVoice: MarvisTTS.Voice?
   @ObservationIgnored private var lastModelVariant: MarvisTTS.ModelVariant?
 
   // MARK: - Initialization
@@ -114,21 +113,10 @@ public final class MarvisEngine: TTSEngine {
   // MARK: - TTSEngine Protocol Methods
 
   public func load(progressHandler: (@Sendable (Progress) -> Void)?) async throws {
-    try await load(voice: .conversationalA, progressHandler: progressHandler)
-  }
-
-  /// Load the model with a specific voice
-  /// - Parameters:
-  ///   - voice: The voice to use (cannot be changed without reloading)
-  ///   - progressHandler: Optional callback for download/load progress
-  public func load(
-    voice: MarvisTTS.Voice = .conversationalA,
-    progressHandler: (@Sendable (Progress) -> Void)? = nil,
-  ) async throws {
     let sessionInitialized = await session.isInitialized
 
     // Check if we need to reload
-    if sessionInitialized, lastModelVariant == modelVariant, loadedVoice == voice {
+    if sessionInitialized, lastModelVariant == modelVariant {
       Log.tts.debug("MarvisEngine already loaded with same configuration")
       return
     }
@@ -141,15 +129,12 @@ public final class MarvisEngine: TTSEngine {
 
     do {
       try await session.initialize(
-        voice: voice,
         modelRepoId: modelVariant.repoId,
         progressHandler: progressHandler ?? { _ in },
-        playbackEnabled: false,
       )
 
       audioPlayer = AudioSamplePlayer(sampleRate: TTSConstants.Audio.marvisSampleRate)
 
-      loadedVoice = voice
       lastModelVariant = modelVariant
       isLoaded = true
       Log.model.info("Marvis TTS model loaded successfully")
@@ -177,7 +162,6 @@ public final class MarvisEngine: TTSEngine {
 
     try await session.cleanUp()
     audioPlayer = nil
-    loadedVoice = nil
     lastModelVariant = nil
     isLoaded = false
 
@@ -187,9 +171,14 @@ public final class MarvisEngine: TTSEngine {
   // MARK: - Generation
 
   /// Generate audio from text
-  /// - Parameter text: The text to synthesize
+  /// - Parameters:
+  ///   - text: The text to synthesize
+  ///   - voice: The voice to use
   /// - Returns: The generated audio result
-  public func generate(_ text: String) async throws -> AudioResult {
+  public func generate(
+    _ text: String,
+    voice: MarvisTTS.Voice,
+  ) async throws -> AudioResult {
     if !isLoaded {
       try await load()
     }
@@ -206,6 +195,7 @@ public final class MarvisEngine: TTSEngine {
     do {
       let result = try await session.generate(
         text: trimmedText,
+        voice: voice,
         quality: qualityLevel,
       )
 
@@ -240,9 +230,14 @@ public final class MarvisEngine: TTSEngine {
   }
 
   /// Generate and immediately play audio
-  /// - Parameter text: The text to synthesize
-  public func say(_ text: String) async throws {
-    let audio = try await generate(text)
+  /// - Parameters:
+  ///   - text: The text to synthesize
+  ///   - voice: The voice to use
+  public func say(
+    _ text: String,
+    voice: MarvisTTS.Voice,
+  ) async throws {
+    let audio = try await generate(text, voice: voice)
     isPlaying = true
     await audio.play()
     isPlaying = false
@@ -250,10 +245,15 @@ public final class MarvisEngine: TTSEngine {
 
   // MARK: - Streaming
 
-  /// Generate audio with streaming playback
-  /// - Parameter text: The text to synthesize
+  /// Generate audio as a stream of chunks (no playback)
+  /// - Parameters:
+  ///   - text: The text to synthesize
+  ///   - voice: The voice to use
   /// - Returns: An async stream of audio chunks
-  public func generateStreaming(_ text: String) -> AsyncThrowingStream<AudioChunk, Error> {
+  public func generateStreaming(
+    _ text: String,
+    voice: MarvisTTS.Voice,
+  ) -> AsyncThrowingStream<AudioChunk, Error> {
     let quality = qualityLevel
     let interval = streamingInterval
     let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -273,23 +273,15 @@ public final class MarvisEngine: TTSEngine {
           return
         }
 
-        guard let audioPlayer else {
-          continuation.finish(throwing: TTSError.modelNotLoaded)
-          return
-        }
-
         isGenerating = true
-        isPlaying = true
         generationTime = 0
 
-        await audioPlayer.stop()
-
-        var allSamples: [Float] = []
         var isFirst = true
 
         do {
           let stream = try await session.generateStreaming(
             text: trimmedText,
+            voice: voice,
             quality: quality,
             interval: interval,
           )
@@ -299,9 +291,6 @@ public final class MarvisEngine: TTSEngine {
               generationTime = result.processingTime
               isFirst = false
             }
-
-            allSamples.append(contentsOf: result.audio)
-            audioPlayer.enqueue(samples: result.audio)
 
             let chunk = AudioChunk(
               samples: result.audio,
@@ -313,28 +302,10 @@ public final class MarvisEngine: TTSEngine {
           }
 
           isGenerating = false
-
-          await audioPlayer.awaitCompletion()
-          isPlaying = false
-
-          if !allSamples.isEmpty {
-            do {
-              let fileURL = try AudioFileWriter.save(
-                samples: allSamples,
-                sampleRate: TTSConstants.Audio.marvisSampleRate,
-                filename: TTSConstants.FileNames.marvisOutput.replacingOccurrences(of: ".wav", with: ""),
-              )
-              lastGeneratedAudioURL = fileURL
-            } catch {
-              Log.audio.error("Failed to save audio file: \(error.localizedDescription)")
-            }
-          }
-
           continuation.finish()
 
         } catch {
           isGenerating = false
-          isPlaying = false
           Log.tts.error("Marvis streaming failed: \(error.localizedDescription)")
           continuation.finish(throwing: TTSError.generationFailed(underlying: error))
         }
@@ -342,11 +313,45 @@ public final class MarvisEngine: TTSEngine {
     }
   }
 
-  /// Generate with streaming playback and wait for completion
-  /// - Parameter text: The text to synthesize
-  public func sayStreaming(_ text: String) async throws {
-    for try await _ in generateStreaming(text) {
-      // Chunks are played automatically
+  /// Play audio with streaming (plays as chunks arrive)
+  /// - Parameters:
+  ///   - text: The text to synthesize
+  ///   - voice: The voice to use
+  public func sayStreaming(
+    _ text: String,
+    voice: MarvisTTS.Voice,
+  ) async throws {
+    guard let audioPlayer else {
+      throw TTSError.modelNotLoaded
+    }
+
+    isPlaying = true
+    var allSamples: [Float] = []
+
+    do {
+      for try await chunk in generateStreaming(text, voice: voice) {
+        allSamples.append(contentsOf: chunk.samples)
+        audioPlayer.enqueue(samples: chunk.samples)
+      }
+
+      await audioPlayer.awaitCompletion()
+      isPlaying = false
+
+      if !allSamples.isEmpty {
+        do {
+          let fileURL = try AudioFileWriter.save(
+            samples: allSamples,
+            sampleRate: TTSConstants.Audio.marvisSampleRate,
+            filename: TTSConstants.FileNames.marvisOutput.replacingOccurrences(of: ".wav", with: ""),
+          )
+          lastGeneratedAudioURL = fileURL
+        } catch {
+          Log.audio.error("Failed to save audio file: \(error.localizedDescription)")
+        }
+      }
+    } catch {
+      isPlaying = false
+      throw error
     }
   }
 }

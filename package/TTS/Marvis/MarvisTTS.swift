@@ -158,18 +158,19 @@ extension MarvisTTS {
     }
   }
 
-  /// Synchronous generation - call from an actor for thread safety
-  func generateSync(
+  /// Generate audio from text
+  func generateAudio(
     text: String,
+    voice: Voice,
     quality: QualityLevel? = nil,
     splitPattern: String? = #"(\n+)"#,
   ) throws -> GenerationResult {
     let pieces = splitText(text, pattern: splitPattern)
     let results = try generateCore(
       text: pieces,
-      voice: boundVoice,
-      refAudio: boundRefAudio,
-      refText: boundRefText,
+      voice: voice,
+      refAudio: nil,
+      refText: nil,
       qualityLevel: quality ?? boundQuality,
       stream: false,
       streamingInterval: 0.5,
@@ -179,9 +180,10 @@ extension MarvisTTS {
     return Self.mergeResults(results)
   }
 
-  /// Synchronous streaming generation - yields results via callback
-  func generateStreamingSync(
+  /// Generate audio with streaming - yields results via callback
+  func generateAudioStream(
     text: String,
+    voice: Voice,
     quality: QualityLevel? = nil,
     interval: Double = 0.5,
     splitPattern: String? = #"(\n+)"#,
@@ -190,9 +192,9 @@ extension MarvisTTS {
     let pieces = splitText(text, pattern: splitPattern)
     _ = try generateCore(
       text: pieces,
-      voice: boundVoice,
-      refAudio: boundRefAudio,
-      refText: boundRefText,
+      voice: voice,
+      refAudio: nil,
+      refText: nil,
       qualityLevel: quality ?? boundQuality,
       stream: true,
       streamingInterval: interval,

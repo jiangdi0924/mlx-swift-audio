@@ -57,11 +57,6 @@ public enum TTSProvider: String, CaseIterable, Identifiable, Sendable {
 
   // MARK: - Feature Flags
 
-  /// Whether this provider supports streaming audio generation
-  public var supportsStreaming: Bool {
-    self == .marvis
-  }
-
   /// Whether this provider supports speed adjustment
   public var supportsSpeed: Bool {
     self == .kokoro

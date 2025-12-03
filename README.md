@@ -15,29 +15,32 @@ import MLXAudio
 
 // Kokoro - 60+ voices, speed control
 let kokoro = KokoroEngine()
+try await kokoro.load()
 try await kokoro.say("Hello, world!", voice: .afHeart)
-
-// With speed adjustment
 try await kokoro.say("Speaking faster", voice: .afNova, speed: 1.5)
 
 // Orpheus - emotional expressions
 let orpheus = OrpheusEngine()
+try await orpheus.load()
 try await orpheus.say("Ha! <laugh> That's funny.", voice: .tara)
 
 // Marvis - streaming audio
 let marvis = MarvisEngine()
-try await marvis.load(voice: .conversationalA)
-try await marvis.sayStreaming("This plays as it generates.")
+try await marvis.load()
+try await marvis.sayStreaming("This plays as it generates.", voice: .conversationalA)
 
 // OuteTTS - custom voices with reference audio
 let outetts = OuteTTSEngine()
-let speaker = try OuteTTSEngine.loadSpeaker(from: "speaker.json")
+try await outetts.load()
+let speaker = try await OuteTTSEngine.loadSpeaker(from: "speaker.json")
 try await outetts.say("Using reference audio.", speaker: speaker)
 ```
 
 For more control over playback:
 
 ```swift
+let kokoro = KokoroEngine()
+try await kokoro.load()
 let audio = try await kokoro.generate("Hello!", voice: .afHeart)
 await audio.play()
 ```

@@ -93,11 +93,11 @@ public final class OrpheusEngine: TTSEngine {
   /// Generate audio from text
   /// - Parameters:
   ///   - text: The text to synthesize
-  ///   - voice: The voice to use (default: .tara)
+  ///   - voice: The voice to use
   /// - Returns: The generated audio result
   public func generate(
     _ text: String,
-    voice: OrpheusTTS.Voice = .tara,
+    voice: OrpheusTTS.Voice,
   ) async throws -> AudioResult {
     if !isLoaded {
       try await load()
@@ -162,10 +162,10 @@ public final class OrpheusEngine: TTSEngine {
   /// Generate and immediately play audio
   /// - Parameters:
   ///   - text: The text to synthesize
-  ///   - voice: The voice to use (default: .tara)
+  ///   - voice: The voice to use
   public func say(
     _ text: String,
-    voice: OrpheusTTS.Voice = .tara,
+    voice: OrpheusTTS.Voice,
   ) async throws {
     let audio = try await generate(text, voice: voice)
     isPlaying = true

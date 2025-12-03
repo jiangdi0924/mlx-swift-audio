@@ -93,7 +93,7 @@ final class EngineManager {
             }
           }
         case .marvis:
-          try await marvisEngine.load(voice: marvisVoice) { [weak self] progress in
+          try await marvisEngine.load { [weak self] progress in
             Task { @MainActor in
               self?.loadingProgress = progress.fractionCompleted
             }
@@ -132,7 +132,7 @@ final class EngineManager {
         case .orpheus:
           return try await orpheusEngine.generate(text, voice: orpheusVoice)
         case .marvis:
-          return try await marvisEngine.generate(text)
+          return try await marvisEngine.generate(text, voice: marvisVoice)
         case .outetts:
           return try await outeTTSEngine.generate(text)
       }
@@ -146,14 +146,18 @@ final class EngineManager {
     }
   }
 
-  /// Generate with streaming (Marvis only)
-  func generateStreaming(text: String) -> AsyncThrowingStream<AudioChunk, Error> {
-    guard selectedProvider == .marvis else {
-      return AsyncThrowingStream { continuation in
-        continuation.finish(throwing: TTSError.invalidArgument("Streaming not supported"))
-      }
+  /// Generate with streaming (Kokoro and Marvis)
+  func generateStreaming(text: String, speed: Float) -> AsyncThrowingStream<AudioChunk, Error> {
+    switch selectedProvider {
+      case .kokoro:
+        kokoroEngine.generateStreaming(text, voice: kokoroVoice, speed: speed)
+      case .marvis:
+        marvisEngine.generateStreaming(text, voice: marvisVoice)
+      default:
+        AsyncThrowingStream { continuation in
+          continuation.finish(throwing: TTSError.invalidArgument("Streaming not supported for \(selectedProvider.displayName)"))
+        }
     }
-    return marvisEngine.generateStreaming(text)
   }
 
   /// Play audio result
