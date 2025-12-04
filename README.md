@@ -22,29 +22,29 @@
 import MLXAudio
 
 // Kokoro - 50+ voices, speed control
-let kokoro = KokoroEngine()
+let kokoro = TTS.kokoro()
 try await kokoro.load()
 try await kokoro.say("Hello, world!", voice: .afHeart)
 try await kokoro.say("Speaking faster", voice: .afNova, speed: 1.5)
 
 // Orpheus - emotional expressions
-let orpheus = OrpheusEngine()
+let orpheus = TTS.orpheus()
 try await orpheus.load()
 try await orpheus.say("Ha! <laugh> That's funny.", voice: .tara)
 
 // Marvis - streaming audio
-let marvis = MarvisEngine()
+let marvis = TTS.marvis()
 try await marvis.load()
 try await marvis.sayStreaming("This plays as it generates.", voice: .conversationalA)
 
 // OuteTTS - custom voices with reference audio
-let outetts = OuteTTSEngine()
+let outetts = TTS.outetts()
 try await outetts.load()
-let speaker = try await OuteTTSEngine.loadSpeaker(from: "speaker.json")
+let speaker = try await OuteTTSSpeakerProfile.load(from: "speaker.json")
 try await outetts.say("Using reference audio.", speaker: speaker)
 
 // Chatterbox - custom reference audio with emotion control
-let chatterbox = ChatterboxEngine()
+let chatterbox = TTS.chatterbox()
 try await chatterbox.load()
 let referenceAudio = try await chatterbox.prepareReferenceAudio(from: audioFileURL)
 try await chatterbox.say("Speaking with your reference audio.", referenceAudio: referenceAudio)
@@ -53,7 +53,7 @@ try await chatterbox.say("Speaking with your reference audio.", referenceAudio: 
 For more control over playback:
 
 ```swift
-let kokoro = KokoroEngine()
+let kokoro = TTS.kokoro()
 try await kokoro.load()
 let audio = try await kokoro.generate("Hello!", voice: .afHeart)
 await audio.play()

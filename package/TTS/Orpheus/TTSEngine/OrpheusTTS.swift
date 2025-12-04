@@ -45,17 +45,6 @@ private struct InferenceState: @unchecked Sendable {
 }
 
 public actor OrpheusTTS {
-  public enum Voice: String, CaseIterable, Sendable {
-    case tara // Female, conversational, clear
-    case leah // Female, warm, gentle
-    case jess // Female, energetic, youthful
-    case leo // Male, authoritative, deep
-    case dan // Male, friendly, casual
-    case mia // Female, professional, articulate
-    case zac // Male, enthusiastic, dynamic
-    case zoe // Female, calm, soothing
-  }
-
   enum OrpheusTTSError: LocalizedError {
     case tooManyTokens
     case weightsNotAvailable
@@ -96,7 +85,7 @@ public actor OrpheusTTS {
   // but are only accessed within the actor's methods
   private nonisolated(unsafe) let model: OrpheusLMHeadModel
   private nonisolated(unsafe) let snacDecoder: SNACDecoder
-  private var chosenVoice: Voice?
+  private var chosenVoice: OrpheusEngine.Voice?
   private let tokenizer: OrpheusTokenizer
 
   private init(model: OrpheusLMHeadModel, snacDecoder: SNACDecoder, tokenizer: OrpheusTokenizer) {
@@ -170,7 +159,7 @@ public actor OrpheusTTS {
     return OrpheusTTS(model: model, snacDecoder: snacDecoder, tokenizer: tokenizer)
   }
 
-  func generateAudio(voice: Voice, text: String, temperature: Float = 0.6, topP: Float = 0.8) throws -> [Float] {
+  func generateAudio(voice: OrpheusEngine.Voice, text: String, temperature: Float = 0.6, topP: Float = 0.8) throws -> [Float] {
     let totalGenerationStart = CFAbsoluteTimeGetCurrent()
 
     // Prepare input with voice prefix

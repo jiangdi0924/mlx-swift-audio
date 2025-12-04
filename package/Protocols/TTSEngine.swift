@@ -59,6 +59,36 @@ public extension TTSEngine {
   }
 }
 
+// MARK: - Factory
+
+/// Namespace for discovering and creating TTS engines with full type safety.
+///
+/// Each method returns a concrete engine type, enabling autocomplete for
+/// engine-specific features like typed voices.
+///
+/// ```swift
+/// let engine = TTS.kokoro()
+/// try await engine.load()
+/// try await engine.say("Hello", voice: .afHeart)  // typed voice enum
+/// ```
+@MainActor
+public enum TTS {
+  /// Kokoro: 50+ voices, speed control, streaming
+  public static func kokoro() -> KokoroEngine { KokoroEngine() }
+
+  /// Orpheus: 8 voices, emotional expressions
+  public static func orpheus() -> OrpheusEngine { OrpheusEngine() }
+
+  /// Marvis: streaming, quality levels
+  public static func marvis() -> MarvisEngine { MarvisEngine() }
+
+  /// OuteTTS: custom speaker profiles
+  public static func outetts() -> OuteTTSEngine { OuteTTSEngine() }
+
+  /// Chatterbox: reference audio, emotion control
+  public static func chatterbox() -> ChatterboxEngine { ChatterboxEngine() }
+}
+
 /// Marker protocol for engines that support streaming generation.
 ///
 /// Engines conforming to this protocol provide `generateStreaming` and `sayStreaming` methods.

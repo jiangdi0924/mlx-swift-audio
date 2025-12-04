@@ -32,11 +32,11 @@ struct VoicePickerView: View {
 // MARK: - Kokoro Voice Picker
 
 private struct KokoroVoicePicker: View {
-  @Binding var voice: KokoroTTS.Voice
+  @Binding var voice: KokoroEngine.Voice
 
   var body: some View {
     Menu {
-      ForEach(KokoroTTS.Voice.allCases, id: \.self) { v in
+      ForEach(KokoroEngine.Voice.allCases, id: \.self) { v in
         Button {
           voice = v
         } label: {
@@ -57,11 +57,11 @@ private struct KokoroVoicePicker: View {
 // MARK: - Orpheus Voice Picker
 
 private struct OrpheusVoicePicker: View {
-  @Binding var voice: OrpheusTTS.Voice
+  @Binding var voice: OrpheusEngine.Voice
 
   var body: some View {
     Menu {
-      ForEach(OrpheusTTS.Voice.allCases, id: \.self) { v in
+      ForEach(OrpheusEngine.Voice.allCases, id: \.self) { v in
         Button {
           voice = v
         } label: {
@@ -82,11 +82,11 @@ private struct OrpheusVoicePicker: View {
 // MARK: - Marvis Voice Picker
 
 private struct MarvisVoicePicker: View {
-  @Binding var voice: MarvisTTS.Voice
+  @Binding var voice: MarvisEngine.Voice
 
   var body: some View {
     Menu {
-      ForEach(MarvisTTS.Voice.allCases, id: \.self) { v in
+      ForEach(MarvisEngine.Voice.allCases, id: \.self) { v in
         Button {
           voice = v
         } label: {
@@ -103,7 +103,7 @@ private struct MarvisVoicePicker: View {
     .buttonStyle(.plain)
   }
 
-  private func displayName(for voice: MarvisTTS.Voice) -> String {
+  private func displayName(for voice: MarvisEngine.Voice) -> String {
     switch voice {
       case .conversationalA: "Conversational A"
       case .conversationalB: "Conversational B"
@@ -129,7 +129,7 @@ private func voiceLabel(_ text: String) -> some View {
 
 // MARK: - Voice Display Name Extension
 
-extension KokoroTTS.Voice {
+extension KokoroEngine.Voice {
   var displayName: String {
     // Format: afHeart -> Heart
     let name = String(describing: self)

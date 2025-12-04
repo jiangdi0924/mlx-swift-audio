@@ -154,17 +154,17 @@ final class AppState {
 // MARK: - Voice Selection
 
 extension AppState {
-  var kokoroVoice: KokoroTTS.Voice {
+  var kokoroVoice: KokoroEngine.Voice {
     get { engineManager.kokoroVoice }
     set { engineManager.kokoroVoice = newValue }
   }
 
-  var orpheusVoice: OrpheusTTS.Voice {
+  var orpheusVoice: OrpheusEngine.Voice {
     get { engineManager.orpheusVoice }
     set { engineManager.orpheusVoice = newValue }
   }
 
-  var marvisVoice: MarvisTTS.Voice {
+  var marvisVoice: MarvisEngine.Voice {
     get { engineManager.marvisVoice }
     set { engineManager.marvisVoice = newValue }
   }
@@ -174,7 +174,7 @@ extension AppState {
 
 extension AppState {
   /// Quality level for Marvis
-  var marvisQualityLevel: MarvisTTS.QualityLevel {
+  var marvisQualityLevel: MarvisEngine.QualityLevel {
     get { engineManager.marvisEngine.qualityLevel }
     set { engineManager.marvisEngine.qualityLevel = newValue }
   }

@@ -30,9 +30,9 @@ final class EngineManager {
 
   // MARK: - Voice Selection (string-based for UI)
 
-  var kokoroVoice: KokoroTTS.Voice = .afHeart
-  var orpheusVoice: OrpheusTTS.Voice = .tara
-  var marvisVoice: MarvisTTS.Voice = .conversationalA
+  var kokoroVoice: KokoroEngine.Voice = .afHeart
+  var orpheusVoice: OrpheusEngine.Voice = .tara
+  var marvisVoice: MarvisEngine.Voice = .conversationalA
 
   // MARK: - Chatterbox Reference Audio
 
@@ -116,6 +116,10 @@ final class EngineManager {
             Task { @MainActor in
               self?.loadingProgress = progress.fractionCompleted
             }
+          }
+          // Load default reference audio if none is set
+          if chatterboxReferenceAudio == nil {
+            chatterboxReferenceAudio = try await chatterboxEngine.prepareDefaultReferenceAudio()
           }
       }
       isLoading = false

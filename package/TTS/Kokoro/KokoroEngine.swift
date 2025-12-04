@@ -13,6 +13,75 @@ import Foundation
 @Observable
 @MainActor
 public final class KokoroEngine: TTSEngine, StreamingTTSEngine {
+  // MARK: - Voice
+
+  /// Available voices for Kokoro TTS
+  public enum Voice: String, CaseIterable, Sendable {
+    // American Female
+    case afAlloy
+    case afAoede
+    case afBella
+    case afHeart
+    case afJessica
+    case afKore
+    case afNicole
+    case afNova
+    case afRiver
+    case afSarah
+    case afSky
+    // American Male
+    case amAdam
+    case amEcho
+    case amEric
+    case amFenrir
+    case amLiam
+    case amMichael
+    case amOnyx
+    case amPuck
+    case amSanta
+    // British Female
+    case bfAlice
+    case bfEmma
+    case bfIsabella
+    case bfLily
+    // British Male
+    case bmDaniel
+    case bmFable
+    case bmGeorge
+    case bmLewis
+    // Spanish
+    case efDora
+    case emAlex
+    // French
+    case ffSiwis
+    // Hindi
+    case hfAlpha
+    case hfBeta
+    case hfOmega
+    case hmPsi
+    // Italian
+    case ifSara
+    case imNicola
+    // Japanese
+    case jfAlpha
+    case jfGongitsune
+    case jfNezumi
+    case jfTebukuro
+    case jmKumo
+    // Portuguese
+    case pfDora
+    case pmSanta
+    // Chinese
+    case zfXiaobei
+    case zfXiaoni
+    case zfXiaoxiao
+    case zfXiaoyi
+    case zmYunjian
+    case zmYunxi
+    case zmYunxia
+    case zmYunyang
+  }
+
   // MARK: - TTSEngine Protocol Properties
 
   public let provider: TTSProvider = .kokoro
@@ -91,7 +160,7 @@ public final class KokoroEngine: TTSEngine, StreamingTTSEngine {
   /// - Returns: The generated audio result
   public func generate(
     _ text: String,
-    voice: KokoroTTS.Voice,
+    voice: Voice,
     speed: Float = 1.0,
   ) async throws -> AudioResult {
     if !isLoaded {
@@ -165,7 +234,7 @@ public final class KokoroEngine: TTSEngine, StreamingTTSEngine {
   ///   - speed: Playback speed multiplier (default: 1.0)
   public func say(
     _ text: String,
-    voice: KokoroTTS.Voice,
+    voice: Voice,
     speed: Float = 1.0,
   ) async throws {
     let audio = try await generate(text, voice: voice, speed: speed)
@@ -184,7 +253,7 @@ public final class KokoroEngine: TTSEngine, StreamingTTSEngine {
   /// - Returns: An async stream of audio chunks
   public func generateStreaming(
     _ text: String,
-    voice: KokoroTTS.Voice,
+    voice: Voice,
     speed: Float = 1.0,
   ) -> AsyncThrowingStream<AudioChunk, Error> {
     let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -255,7 +324,7 @@ public final class KokoroEngine: TTSEngine, StreamingTTSEngine {
   @discardableResult
   public func sayStreaming(
     _ text: String,
-    voice: KokoroTTS.Voice,
+    voice: Voice,
     speed: Float = 1.0,
   ) async throws -> AudioResult {
     guard let audioPlayer else {

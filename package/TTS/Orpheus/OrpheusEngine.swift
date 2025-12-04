@@ -15,6 +15,20 @@ import Foundation
 @Observable
 @MainActor
 public final class OrpheusEngine: TTSEngine {
+  // MARK: - Voice
+
+  /// Available voices for Orpheus TTS
+  public enum Voice: String, CaseIterable, Sendable {
+    case tara // Female, conversational, clear
+    case leah // Female, warm, gentle
+    case jess // Female, energetic, youthful
+    case leo // Male, authoritative, deep
+    case dan // Male, friendly, casual
+    case mia // Female, professional, articulate
+    case zac // Male, enthusiastic, dynamic
+    case zoe // Female, calm, soothing
+  }
+
   // MARK: - TTSEngine Protocol Properties
 
   public let provider: TTSProvider = .orpheus
@@ -97,7 +111,7 @@ public final class OrpheusEngine: TTSEngine {
   /// - Returns: The generated audio result
   public func generate(
     _ text: String,
-    voice: OrpheusTTS.Voice,
+    voice: Voice,
   ) async throws -> AudioResult {
     if !isLoaded {
       try await load()
@@ -165,7 +179,7 @@ public final class OrpheusEngine: TTSEngine {
   ///   - voice: The voice to use
   public func say(
     _ text: String,
-    voice: OrpheusTTS.Voice,
+    voice: Voice,
   ) async throws {
     let audio = try await generate(text, voice: voice)
     isPlaying = true

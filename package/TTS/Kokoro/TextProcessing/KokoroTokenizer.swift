@@ -145,7 +145,7 @@ final class KokoroTokenizer {
 
   // MARK: - Public API
 
-  func setLanguage(for voice: KokoroTTS.Voice) throws {
+  func setLanguage(for voice: KokoroEngine.Voice) throws {
     let language = try eSpeakEngine.languageForVoice(voice: voice)
     if currentLanguage != language {
       try eSpeakEngine.setLanguage(for: voice)

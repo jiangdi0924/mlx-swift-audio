@@ -173,13 +173,4 @@ public final class OuteTTSEngine: TTSEngine {
     await audio.play()
     isPlaying = false
   }
-
-  // MARK: - Speaker Profile Helpers
-
-  /// Load a speaker profile from a JSON file
-  /// - Parameter path: Path to the speaker profile JSON file
-  /// - Returns: The loaded speaker profile
-  public static func loadSpeaker(from path: String) async throws -> OuteTTSSpeakerProfile {
-    try await OuteTTSSpeakerProfile.load(from: path)
-  }
 }

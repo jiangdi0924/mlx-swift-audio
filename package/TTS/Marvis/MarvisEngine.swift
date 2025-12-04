@@ -27,8 +27,8 @@ actor MarvisTTSSession {
 
   func generate(
     text: String,
-    voice: MarvisTTS.Voice,
-    quality: MarvisTTS.QualityLevel,
+    voice: MarvisEngine.Voice,
+    quality: MarvisEngine.QualityLevel,
   ) throws -> MarvisTTS.GenerationResult {
     guard let tts else { throw TTSError.modelNotLoaded }
     return try tts.generateAudio(text: text, voice: voice, quality: quality)
@@ -36,8 +36,8 @@ actor MarvisTTSSession {
 
   func generateStreaming(
     text: String,
-    voice: MarvisTTS.Voice,
-    quality: MarvisTTS.QualityLevel,
+    voice: MarvisEngine.Voice,
+    quality: MarvisEngine.QualityLevel,
     interval: Double,
   ) throws -> AsyncThrowingStream<MarvisTTS.GenerationResult, Error> {
     guard let tts else { throw TTSError.modelNotLoaded }
@@ -73,6 +73,52 @@ actor MarvisTTSSession {
 @Observable
 @MainActor
 public final class MarvisEngine: TTSEngine, StreamingTTSEngine {
+  // MARK: - Types
+
+  /// Model variants for Marvis TTS
+  public enum ModelVariant: String, CaseIterable, Sendable {
+    case model100m_v0_2_6bit = "Marvis-AI/marvis-tts-100m-v0.2-MLX-6bit"
+    case model250m_v0_2_6bit = "Marvis-AI/marvis-tts-250m-v0.2-MLX-6bit"
+
+    public static let `default`: ModelVariant = .model100m_v0_2_6bit
+
+    public var displayName: String {
+      switch self {
+        case .model100m_v0_2_6bit:
+          "100M v0.2 (6-bit)"
+        case .model250m_v0_2_6bit:
+          "250M v0.2 (6-bit)"
+      }
+    }
+
+    public var repoId: String {
+      rawValue
+    }
+  }
+
+  /// Available voices for Marvis TTS
+  public enum Voice: String, CaseIterable, Sendable {
+    case conversationalA = "conversational_a"
+    case conversationalB = "conversational_b"
+  }
+
+  /// Quality levels for audio generation
+  public enum QualityLevel: String, CaseIterable, Sendable {
+    case low
+    case medium
+    case high
+    case maximum
+
+    public var codebookCount: Int {
+      switch self {
+        case .low: 8
+        case .medium: 16
+        case .high: 24
+        case .maximum: 32
+      }
+    }
+  }
+
   // MARK: - TTSEngine Protocol Properties
 
   public let provider: TTSProvider = .marvis
@@ -85,10 +131,10 @@ public final class MarvisEngine: TTSEngine, StreamingTTSEngine {
   // MARK: - Marvis-Specific Properties
 
   /// Model variant to use
-  public var modelVariant: MarvisTTS.ModelVariant = .default
+  public var modelVariant: ModelVariant = .default
 
   /// Quality level (affects codebook count)
-  public var qualityLevel: MarvisTTS.QualityLevel = .maximum
+  public var qualityLevel: QualityLevel = .maximum
 
   /// Streaming interval in seconds
   public var streamingInterval: Double = TTSConstants.Timing.defaultStreamingInterval
@@ -98,7 +144,7 @@ public final class MarvisEngine: TTSEngine, StreamingTTSEngine {
   @ObservationIgnored private let session = MarvisTTSSession()
   @ObservationIgnored private var audioPlayer: AudioSamplePlayer?
   @ObservationIgnored private var generationTask: Task<Void, Never>?
-  @ObservationIgnored private var lastModelVariant: MarvisTTS.ModelVariant?
+  @ObservationIgnored private var lastModelVariant: ModelVariant?
 
   // MARK: - Initialization
 
@@ -177,7 +223,7 @@ public final class MarvisEngine: TTSEngine, StreamingTTSEngine {
   /// - Returns: The generated audio result
   public func generate(
     _ text: String,
-    voice: MarvisTTS.Voice,
+    voice: Voice,
   ) async throws -> AudioResult {
     if !isLoaded {
       try await load()
@@ -235,7 +281,7 @@ public final class MarvisEngine: TTSEngine, StreamingTTSEngine {
   ///   - voice: The voice to use
   public func say(
     _ text: String,
-    voice: MarvisTTS.Voice,
+    voice: Voice,
   ) async throws {
     let audio = try await generate(text, voice: voice)
     isPlaying = true
@@ -252,7 +298,7 @@ public final class MarvisEngine: TTSEngine, StreamingTTSEngine {
   /// - Returns: An async stream of audio chunks
   public func generateStreaming(
     _ text: String,
-    voice: MarvisTTS.Voice,
+    voice: Voice,
   ) -> AsyncThrowingStream<AudioChunk, Error> {
     let quality = qualityLevel
     let interval = streamingInterval
@@ -320,7 +366,7 @@ public final class MarvisEngine: TTSEngine, StreamingTTSEngine {
   @discardableResult
   public func sayStreaming(
     _ text: String,
-    voice: MarvisTTS.Voice,
+    voice: Voice,
   ) async throws -> AudioResult {
     guard let audioPlayer else {
       throw TTSError.modelNotLoaded
@@ -369,10 +415,10 @@ public final class MarvisEngine: TTSEngine, StreamingTTSEngine {
 
 extension MarvisEngine {
   /// Available quality levels
-  static let qualityLevels = MarvisTTS.QualityLevel.allCases
+  static let qualityLevels = QualityLevel.allCases
 
   /// Description for each quality level
-  func qualityDescription(for level: MarvisTTS.QualityLevel) -> String {
+  func qualityDescription(for level: QualityLevel) -> String {
     switch level {
       case .low:
         "\(level.codebookCount) codebooks - Fastest, lower quality"

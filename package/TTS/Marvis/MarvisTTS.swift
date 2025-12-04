@@ -9,49 +9,6 @@ import Tokenizers
 // MARK: - Main Class
 
 public final class MarvisTTS: Module {
-  public enum ModelVariant: String, CaseIterable, Sendable {
-    case model100m_v0_2_6bit = "Marvis-AI/marvis-tts-100m-v0.2-MLX-6bit"
-    case model250m_v0_2_6bit = "Marvis-AI/marvis-tts-250m-v0.2-MLX-6bit"
-
-    public static let `default`: ModelVariant = .model100m_v0_2_6bit
-
-    public var displayName: String {
-      switch self {
-        case .model100m_v0_2_6bit:
-          "100M v0.2 (6-bit)"
-        case .model250m_v0_2_6bit:
-          "250M v0.2 (6-bit)"
-      }
-    }
-
-    public var repoId: String {
-      rawValue
-    }
-  }
-
-  // MARK: - Public Types
-
-  public enum Voice: String, CaseIterable, Sendable {
-    case conversationalA = "conversational_a"
-    case conversationalB = "conversational_b"
-  }
-
-  public enum QualityLevel: String, CaseIterable, Sendable {
-    case low
-    case medium
-    case high
-    case maximum
-
-    public var codebookCount: Int {
-      switch self {
-        case .low: 8
-        case .medium: 16
-        case .high: 24
-        case .maximum: 32
-      }
-    }
-  }
-
   public struct GenerationResult: Sendable {
     public let audio: [Float]
     public let sampleRate: Int
@@ -75,10 +32,10 @@ public final class MarvisTTS: Module {
   private let streamingDecoder: MimiStreamingDecoder
   private var playback: AudioPlayback?
   private let playbackEnabled: Bool
-  private var boundVoice: Voice? = .conversationalA
+  private var boundVoice: MarvisEngine.Voice? = .conversationalA
   private var boundRefAudio: MLXArray?
   private var boundRefText: String?
-  private var boundQuality: QualityLevel = .maximum
+  private var boundQuality: MarvisEngine.QualityLevel = .maximum
 
   // MARK: - Initializers
 
@@ -109,8 +66,8 @@ public final class MarvisTTS: Module {
   }
 
   convenience init(
-    voice: Voice = .conversationalA,
-    model: String = ModelVariant.default.repoId,
+    voice: MarvisEngine.Voice = .conversationalA,
+    model: String = MarvisEngine.ModelVariant.default.repoId,
     progressHandler: @escaping (Progress) -> Void = { _ in },
     playbackEnabled: Bool = true,
   ) async throws {
@@ -126,7 +83,7 @@ public final class MarvisTTS: Module {
   convenience init(
     refAudio: MLXArray,
     refText: String,
-    model: String = ModelVariant.default.repoId,
+    model: String = MarvisEngine.ModelVariant.default.repoId,
     progressHandler: @escaping (Progress) -> Void = { _ in },
     playbackEnabled: Bool = true,
   ) async throws {
@@ -161,8 +118,8 @@ extension MarvisTTS {
   /// Generate audio from text
   func generateAudio(
     text: String,
-    voice: Voice,
-    quality: QualityLevel? = nil,
+    voice: MarvisEngine.Voice,
+    quality: MarvisEngine.QualityLevel? = nil,
     splitPattern: String? = #"(\n+)"#,
   ) throws -> GenerationResult {
     let pieces = splitText(text, pattern: splitPattern)
@@ -183,8 +140,8 @@ extension MarvisTTS {
   /// Generate audio with streaming - yields results via callback
   func generateAudioStream(
     text: String,
-    voice: Voice,
-    quality: QualityLevel? = nil,
+    voice: MarvisEngine.Voice,
+    quality: MarvisEngine.QualityLevel? = nil,
     interval: Double = 0.5,
     splitPattern: String? = #"(\n+)"#,
     onResult: @escaping @Sendable (GenerationResult) -> Void,
@@ -205,7 +162,7 @@ extension MarvisTTS {
 
   /// Creates a Marvis session and binds a default voice.
   static func make(
-    voice: Voice = .conversationalA,
+    voice: MarvisEngine.Voice = .conversationalA,
     repoId: String = "Marvis-AI/marvis-tts-250m-v0.1",
     progressHandler: @escaping (Progress) -> Void = { _ in },
   ) async throws -> MarvisTTS {
@@ -301,8 +258,8 @@ private extension MarvisTTS {
 
   /// Creates a Marvis session and binds a default voice.
   static func make(
-    voice: Voice = .conversationalA,
-    model: String = ModelVariant.default.repoId,
+    voice: MarvisEngine.Voice = .conversationalA,
+    model: String = MarvisEngine.ModelVariant.default.repoId,
     progressHandler: @escaping (Progress) -> Void = { _ in },
   ) async throws -> MarvisTTS {
     let engine = try await fromPretrained(model: model, progressHandler: progressHandler)
@@ -316,7 +273,7 @@ private extension MarvisTTS {
   static func make(
     refAudio: MLXArray,
     refText: String,
-    model: String = ModelVariant.default.repoId,
+    model: String = MarvisEngine.ModelVariant.default.repoId,
     progressHandler: @escaping (Progress) -> Void = { _ in },
   ) async throws -> MarvisTTS {
     let engine = try await fromPretrained(model: model, progressHandler: progressHandler)
@@ -326,7 +283,7 @@ private extension MarvisTTS {
     return engine
   }
 
-  static func fromPretrained(model: String = ModelVariant.default.repoId, progressHandler: @escaping (Progress) -> Void) async throws -> MarvisTTS {
+  static func fromPretrained(model: String = MarvisEngine.ModelVariant.default.repoId, progressHandler: @escaping (Progress) -> Void) async throws -> MarvisTTS {
     let (args, prompts, weightFileURL) = try await snapshotAndConfig(repoId: model, progressHandler: progressHandler)
     let modelInstance = try await MarvisTTS(config: args, repoId: model, promptURLs: prompts, progressHandler: progressHandler)
     try modelInstance.installWeights(args: args, weightFileURL: weightFileURL)
@@ -456,7 +413,7 @@ private extension MarvisTTS {
 
   // MARK: - Generation Context
 
-  func makeContext(voice: Voice?, refAudio: MLXArray?, refText: String?) throws -> Segment {
+  func makeContext(voice: MarvisEngine.Voice?, refAudio: MLXArray?, refText: String?) throws -> Segment {
     if let refAudio, let refText {
       return Segment(speaker: 0, text: refText, audio: refAudio)
     } else if let voice {
@@ -485,10 +442,10 @@ private extension MarvisTTS {
 
   func generateCore(
     text: [String],
-    voice: Voice?,
+    voice: MarvisEngine.Voice?,
     refAudio: MLXArray?,
     refText: String?,
-    qualityLevel: QualityLevel,
+    qualityLevel: MarvisEngine.QualityLevel,
     stream: Bool,
     streamingInterval: Double,
     onStreamingResult: (@Sendable (GenerationResult) -> Void)?,
@@ -536,7 +493,7 @@ private extension MarvisTTS {
     currTokens startTokens: MLXArray,
     currMask startMask: MLXArray,
     currPos startPos: MLXArray,
-    qualityLevel: QualityLevel,
+    qualityLevel: MarvisEngine.QualityLevel,
     stream: Bool,
     streamingIntervalTokens: Int,
     sampler sampleFn: (MLXArray) -> MLXArray,

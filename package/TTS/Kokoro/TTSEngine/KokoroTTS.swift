@@ -7,61 +7,6 @@ import MLXNN
 import Synchronization
 
 public actor KokoroTTS {
-  public enum Voice: String, CaseIterable, Sendable {
-    case afAlloy
-    case afAoede
-    case afBella
-    case afHeart
-    case afJessica
-    case afKore
-    case afNicole
-    case afNova
-    case afRiver
-    case afSarah
-    case afSky
-    case amAdam
-    case amEcho
-    case amEric
-    case amFenrir
-    case amLiam
-    case amMichael
-    case amOnyx
-    case amPuck
-    case amSanta
-    case bfAlice
-    case bfEmma
-    case bfIsabella
-    case bfLily
-    case bmDaniel
-    case bmFable
-    case bmGeorge
-    case bmLewis
-    case efDora
-    case emAlex
-    case ffSiwis
-    case hfAlpha
-    case hfBeta
-    case hfOmega
-    case hmPsi
-    case ifSara
-    case imNicola
-    case jfAlpha
-    case jfGongitsune
-    case jfNezumi
-    case jfTebukuro
-    case jmKumo
-    case pfDora
-    case pmSanta
-    case zfXiaobei
-    case zfXiaoni
-    case zfXiaoxiao
-    case zfXiaoyi
-    case zmYunjian
-    case zmYunxi
-    case zmYunxia
-    case zmYunyang
-  }
-
   enum KokoroTTSError: LocalizedError {
     case tooManyTokens
     case sentenceSplitError
@@ -99,7 +44,7 @@ public actor KokoroTTS {
   private var decoder: Decoder!
   private var eSpeakEngine: ESpeakNGEngine!
   private var kokoroTokenizer: KokoroTokenizer!
-  private var chosenVoice: Voice?
+  private var chosenVoice: KokoroEngine.Voice?
   private var voice: MLXArray!
 
   // Flag to indicate if model components are initialized
@@ -428,7 +373,7 @@ public actor KokoroTTS {
     return audio.asArray(Float.self)
   }
 
-  func generateAudio(voice: Voice, text: String, speed: Float = 1.0, chunkCallback: @escaping AudioChunkCallback) async throws {
+  func generateAudio(voice: KokoroEngine.Voice, text: String, speed: Float = 1.0, chunkCallback: @escaping AudioChunkCallback) async throws {
     try await ensureModelInitialized()
 
     let sentences = SentenceTokenizer.splitIntoSentences(text: text)
@@ -450,7 +395,7 @@ public actor KokoroTTS {
     }
   }
 
-  func generateAudioStream(voice: Voice, text: String, speed: Float = 1.0) async throws -> AsyncThrowingStream<[Float], Error> {
+  func generateAudioStream(voice: KokoroEngine.Voice, text: String, speed: Float = 1.0) async throws -> AsyncThrowingStream<[Float], Error> {
     try await ensureModelInitialized()
 
     let sentences = SentenceTokenizer.splitIntoSentences(text: text)
@@ -471,7 +416,7 @@ public actor KokoroTTS {
     }
   }
 
-  private func generateAudioForSentence(voice: Voice, text: String, speed: Float) async throws -> [Float] {
+  private func generateAudioForSentence(voice: KokoroEngine.Voice, text: String, speed: Float) async throws -> [Float] {
     try await ensureModelInitialized()
 
     if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

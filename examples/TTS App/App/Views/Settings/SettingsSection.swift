@@ -11,7 +11,7 @@ struct SettingsSection: View {
       if appState.selectedProvider.supportsSpeed {
         SpeedSliderView(
           speed: $appState.speed,
-          isDisabled: appState.isGenerating
+          isDisabled: appState.isGenerating,
         )
       }
 
@@ -32,7 +32,7 @@ struct SettingsSection: View {
             Text(String(format: "%.1f", appState.chatterboxExaggeration))
               .foregroundStyle(.secondary)
           }
-          Slider(value: $appState.chatterboxExaggeration, in: 0...2, step: 0.1)
+          Slider(value: $appState.chatterboxExaggeration, in: 0 ... 2, step: 0.1)
         }
       }
 
@@ -54,7 +54,7 @@ private struct QualityLevelSection: View {
     @Bindable var appState = appState
     HStack {
       Picker("Quality", selection: $appState.marvisQualityLevel) {
-        ForEach(MarvisTTS.QualityLevel.allCases, id: \.self) { level in
+        ForEach(MarvisEngine.QualityLevel.allCases, id: \.self) { level in
           Text("\(level.rawValue.capitalized) (\(level.codebookCount) codebooks)")
             .tag(level)
         }
