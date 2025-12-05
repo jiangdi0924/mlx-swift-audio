@@ -135,7 +135,7 @@ struct ReferenceAudioView: View {
     do {
       try await appState.prepareDefaultChatterboxReferenceAudio()
     } catch {
-      errorMessage = "Failed to prepare default audio"
+      errorMessage = error.localizedDescription
     }
 
     isLoading = false
@@ -161,7 +161,7 @@ struct ReferenceAudioView: View {
           do {
             try await appState.prepareChatterboxReferenceAudio(from: url)
           } catch {
-            errorMessage = "Failed to prepare audio file"
+            errorMessage = error.localizedDescription
           }
 
           isLoading = false
@@ -184,7 +184,7 @@ struct ReferenceAudioView: View {
     do {
       try await appState.prepareChatterboxReferenceAudio(from: url)
     } catch {
-      errorMessage = "Failed to prepare audio from URL"
+      errorMessage = error.localizedDescription
     }
 
     isLoading = false

@@ -13,10 +13,8 @@ struct InputSection: View {
       )
 
       // Auto-play toggle
-      Toggle(isOn: $appState.autoPlay) {
-        Label("Auto-play", systemImage: "play.circle")
-      }
-      .toggleStyle(.switch)
+      Toggle("Auto-play", isOn: $appState.autoPlay)
+        .toggleStyle(.switch)
 
       // Generate Button
       GenerateButton(

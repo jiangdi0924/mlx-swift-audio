@@ -67,7 +67,12 @@ final class AppState {
   // MARK: - Engine Operations
 
   func loadEngine() async throws {
-    try await engineManager.loadEngine()
+    do {
+      try await engineManager.loadEngine()
+    } catch {
+      statusMessage = error.localizedDescription
+      throw error
+    }
   }
 
   /// Generate audio from the current input text
@@ -89,10 +94,8 @@ final class AppState {
       if autoPlay, let result = lastResult {
         await engineManager.play(result)
       }
-    } catch let e as TTSError {
-      statusMessage = e.localizedDescription
     } catch {
-      statusMessage = TTSError.generationFailed(underlying: error).localizedDescription
+      statusMessage = error.localizedDescription
     }
   }
 
@@ -113,10 +116,8 @@ final class AppState {
       if let result = lastResult {
         statusMessage = formatResultStatus(result)
       }
-    } catch let e as TTSError {
-      if !stopRequested { statusMessage = e.localizedDescription }
     } catch {
-      if !stopRequested { statusMessage = TTSError.generationFailed(underlying: error).localizedDescription }
+      if !stopRequested { statusMessage = error.localizedDescription }
     }
   }
 
