@@ -65,30 +65,18 @@ class T3LlamaAttention: Module {
     queries = rope(queries, offset: offset)
     keys = rope(keys, offset: offset)
 
-    if let cache {
-      let (updatedKeys, updatedValues) = cache.update(keys: keys, values: values)
-      let attnResult = MLXFast.scaledDotProductAttention(
-        queries: queries,
-        keys: updatedKeys,
-        values: updatedValues,
-        scale: scale,
-        mask: mask,
-      )
-      let transposed = attnResult.transposed(0, 2, 1, 3)
-      let output = transposed.reshaped([B, L, config.numAttentionHeads * config.headDim])
-      return oProj(output)
-    } else {
-      let attnResult = MLXFast.scaledDotProductAttention(
-        queries: queries,
-        keys: keys,
-        values: values,
-        scale: scale,
-        mask: mask,
-      )
-      let transposed = attnResult.transposed(0, 2, 1, 3)
-      let output = transposed.reshaped([B, L, config.numAttentionHeads * config.headDim])
-      return oProj(output)
-    }
+    // Use attentionWithCacheUpdate for automatic routing to quantized or regular attention
+    let attnResult = attentionWithCacheUpdate(
+      queries: queries,
+      keys: keys,
+      values: values,
+      cache: cache,
+      scale: scale,
+      mask: mask,
+    )
+
+    let output = attnResult.transposed(0, 2, 1, 3).reshaped([B, L, config.numAttentionHeads * config.headDim])
+    return oProj(output)
   }
 }
 
@@ -165,7 +153,23 @@ class T3LlamaBackbone: Module {
   }
 
   /// Create KV caches for all layers
-  func createCache(batchSize _: Int = 1) -> [KVCache] {
-    (0 ..< config.numHiddenLayers).map { _ in KVCacheSimple() }
+  /// - Parameters:
+  ///   - quantized: If true, use QuantizedKVCache for reduced memory. Note: quantization adds
+  ///     overhead that may exceed benefits for typical sequence lengths. Only enable for very
+  ///     long sequences where memory is constrained.
+  ///   - groupSize: Group size for quantization (default 64)
+  ///   - bits: Number of bits for quantization (default 4)
+  func newCache(
+    quantized: Bool = false,
+    groupSize: Int = 64,
+    bits: Int = 4,
+  ) -> [KVCache] {
+    if quantized {
+      (0 ..< config.numHiddenLayers).map { _ in
+        QuantizedKVCache(groupSize: groupSize, bits: bits)
+      }
+    } else {
+      (0 ..< config.numHiddenLayers).map { _ in KVCacheSimple() }
+    }
   }
 }

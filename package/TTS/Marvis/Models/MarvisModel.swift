@@ -374,6 +374,13 @@ final class MarvisModel: Module {
   var decoderCache: [KVCache]?
   var cachesEnabled: Bool = false
 
+  /// Enable quantized KV cache for reduced memory. Note: quantization adds overhead that may
+  /// exceed benefits for typical sequence lengths. Only enable for very long sequences where
+  /// memory is constrained.
+  var useQuantizedCache: Bool = false
+  var quantizedCacheGroupSize: Int = 64
+  var quantizedCacheBits: Int = 4
+
   init(config: MarvisConfig) throws {
     args = config
 
@@ -436,8 +443,16 @@ final class MarvisModel: Module {
       }
     }
 
-    backboneCache = (0 ..< backboneConfig.hiddenLayers).map { _ in KVCacheSimple() }
-    decoderCache = (0 ..< decoderConfig.hiddenLayers).map { _ in KVCacheSimple() }
+    backboneCache = (0 ..< backboneConfig.hiddenLayers).map { _ in
+      useQuantizedCache
+        ? QuantizedKVCache(groupSize: quantizedCacheGroupSize, bits: quantizedCacheBits)
+        : KVCacheSimple()
+    }
+    decoderCache = (0 ..< decoderConfig.hiddenLayers).map { _ in
+      useQuantizedCache
+        ? QuantizedKVCache(groupSize: quantizedCacheGroupSize, bits: quantizedCacheBits)
+        : KVCacheSimple()
+    }
     cachesEnabled = true
   }
 
@@ -488,7 +503,11 @@ final class MarvisModel: Module {
         fatalError("Failed to create MarvisBackboneConfig for decoder: \(error). Decoder flavor: \(decoderFlavor)")
       }
     }
-    decoderCache = (0 ..< decoderConfig.hiddenLayers).map { _ in KVCacheSimple() }
+    decoderCache = (0 ..< decoderConfig.hiddenLayers).map { _ in
+      useQuantizedCache
+        ? QuantizedKVCache(groupSize: quantizedCacheGroupSize, bits: quantizedCacheBits)
+        : KVCacheSimple()
+    }
 
     let codeBooks = min(args.audioNumCodebooks, maxCodebooks)
     if codeBooks > 1 {

@@ -228,8 +228,8 @@ class T3: Module {
     // Build initial input: [cond | text | bos]
     let inputEmbeddings = MLX.concatenated([condEmb, textEmbeddings, bosEmbed], axis: 1)
 
-    // Create KV cache
-    let cache = tfmr.createCache(batchSize: cfgWeight > 0.0 ? 2 : 1)
+    // Create KV cache (non-quantized is faster - quantization overhead exceeds memory benefits)
+    let cache = tfmr.newCache(quantized: false)
 
     // Track generated tokens - use Int32 directly to avoid conversion overhead
     var generatedIds: [Int32] = [Int32(config.startSpeechToken)]

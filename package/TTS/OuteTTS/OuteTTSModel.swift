@@ -148,26 +148,15 @@ private class OuteTTSAttention: Module {
     queries = applyRoPE(queries, offset: offset)
     keys = applyRoPE(keys, offset: offset)
 
-    // Update cache and compute attention
-    let output: MLXArray
-    if let cache {
-      (keys, values) = cache.update(keys: keys, values: values)
-      output = MLXFast.scaledDotProductAttention(
-        queries: queries,
-        keys: keys,
-        values: values,
-        scale: scale,
-        mask: mask,
-      )
-    } else {
-      output = MLXFast.scaledDotProductAttention(
-        queries: queries,
-        keys: keys,
-        values: values,
-        scale: scale,
-        mask: mask,
-      )
-    }
+    // Use attentionWithCacheUpdate for automatic routing to quantized or regular attention
+    let output = attentionWithCacheUpdate(
+      queries: queries,
+      keys: keys,
+      values: values,
+      cache: cache,
+      scale: scale,
+      mask: mask,
+    )
 
     // Reshape back: [B, H, L, D] -> [B, L, H*D]
     let outputReshaped = output.transposed(0, 2, 1, 3).reshaped(B, L, -1)
@@ -283,8 +272,24 @@ class OuteTTSLMHeadModel: Module {
   }
 
   /// Create KV caches for all layers
-  func newCache() -> [KVCache] {
-    (0 ..< config.hiddenLayers).map { _ in KVCacheSimple() }
+  /// - Parameters:
+  ///   - quantized: If true, use QuantizedKVCache for reduced memory. Note: quantization adds
+  ///     overhead that may exceed benefits for typical sequence lengths. Only enable for very
+  ///     long sequences where memory is constrained.
+  ///   - groupSize: Group size for quantization (default 64)
+  ///   - bits: Number of bits for quantization (default 4)
+  func newCache(
+    quantized: Bool = false,
+    groupSize: Int = 64,
+    bits: Int = 4,
+  ) -> [KVCache] {
+    if quantized {
+      (0 ..< config.hiddenLayers).map { _ in
+        QuantizedKVCache(groupSize: groupSize, bits: bits)
+      }
+    } else {
+      (0 ..< config.hiddenLayers).map { _ in KVCacheSimple() }
+    }
   }
 
   /// Sanitize weights - remove unused rotary embeddings

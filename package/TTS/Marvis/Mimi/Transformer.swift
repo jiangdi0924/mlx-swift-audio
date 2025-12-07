@@ -296,8 +296,25 @@ final class Transformer: Module {
     return x
   }
 
-  func makeCache() -> [KVCache] {
-    (0 ..< config.numLayers).map { _ in KVCacheSimple() }
+  /// Create KV caches for all layers
+  /// - Parameters:
+  ///   - quantized: If true, use QuantizedKVCache for reduced memory. Note: quantization adds
+  ///     overhead that may exceed benefits for typical sequence lengths. Only enable for very
+  ///     long sequences where memory is constrained.
+  ///   - groupSize: Group size for quantization (default 64)
+  ///   - bits: Number of bits for quantization (default 4)
+  func newCache(
+    quantized: Bool = false,
+    groupSize: Int = 64,
+    bits: Int = 4,
+  ) -> [KVCache] {
+    if quantized {
+      (0 ..< config.numLayers).map { _ in
+        QuantizedKVCache(groupSize: groupSize, bits: bits)
+      }
+    } else {
+      (0 ..< config.numLayers).map { _ in KVCacheSimple() }
+    }
   }
 }
 
@@ -355,5 +372,5 @@ final class ProjectedTransformer: Module {
     }
   }
 
-  func makeCache() -> [KVCache] { transformer.makeCache() }
+  func newCache() -> [KVCache] { transformer.newCache() }
 }

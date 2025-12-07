@@ -150,15 +150,15 @@ final class Mimi: Module {
       stride: downsampleStride, dim: config.seanet.dimension, causal: true,
     )
 
-    encoderCache = _encoderTransformer.wrappedValue.makeCache()
-    decoderCache = _decoderTransformer.wrappedValue.makeCache()
+    encoderCache = _encoderTransformer.wrappedValue.newCache()
+    decoderCache = _decoderTransformer.wrappedValue.newCache()
   }
 
   func resetState() {
     encoder.resetState()
     decoder.resetState()
-    decoderCache = decoderTransformer.makeCache()
-    encoderCache = encoderTransformer.makeCache()
+    decoderCache = decoderTransformer.newCache()
+    encoderCache = encoderTransformer.newCache()
   }
 
   var frameRate: Double { config.frameRate }
@@ -166,7 +166,7 @@ final class Mimi: Module {
 
   func encode(_ xs: MLXArray) -> MLXArray {
     encoder.resetState()
-    encoderCache = encoderTransformer.makeCache()
+    encoderCache = encoderTransformer.newCache()
 
     var z = encoder(xs)
     z = encoderTransformer(z, cache: encoderCache)[0]
@@ -176,7 +176,7 @@ final class Mimi: Module {
 
   func decode(_ codes: MLXArray) -> MLXArray {
     decoder.resetState()
-    decoderCache = decoderTransformer.makeCache()
+    decoderCache = decoderTransformer.newCache()
 
     var z = quantizer.decode(codes) // [B, Cdim, Tq]
     z = upsample(z)
@@ -214,7 +214,7 @@ final class MimiStreamingDecoder {
   func reset() {
     mimi.decoder.resetState()
     mimi.upsample.resetState()
-    mimi.decoderCache = mimi.decoderTransformer.makeCache()
+    mimi.decoderCache = mimi.decoderTransformer.newCache()
   }
 
   func decodeFrames(_ tokens: MLXArray) -> MLXArray {

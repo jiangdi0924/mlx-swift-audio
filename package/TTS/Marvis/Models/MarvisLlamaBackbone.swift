@@ -205,30 +205,18 @@ private class MarvisAttention: Module {
     queries = rope(queries, offset: offset)
     keys = rope(keys, offset: offset)
 
-    if let cache {
-      let (updatedKeys, updatedValues) = cache.update(keys: keys, values: values)
-      let attnResult = MLXFast.scaledDotProductAttention(
-        queries: queries,
-        keys: updatedKeys,
-        values: updatedValues,
-        scale: scale,
-        mask: mask,
-      )
-      let transposed = attnResult.transposed(0, 2, 1, 3)
-      let output = transposed.reshaped([B, L, args.attentionHeads * args.resolvedHeadDimensions])
-      return oProj(output)
-    } else {
-      let attnResult = MLXFast.scaledDotProductAttention(
-        queries: queries,
-        keys: keys,
-        values: values,
-        scale: scale,
-        mask: mask,
-      )
-      let transposed = attnResult.transposed(0, 2, 1, 3)
-      let output = transposed.reshaped([B, L, args.attentionHeads * args.resolvedHeadDimensions])
-      return oProj(output)
-    }
+    // Use attentionWithCacheUpdate for automatic routing to quantized or regular attention
+    let attnResult = attentionWithCacheUpdate(
+      queries: queries,
+      keys: keys,
+      values: values,
+      cache: cache,
+      scale: scale,
+      mask: mask,
+    )
+    let transposed = attnResult.transposed(0, 2, 1, 3)
+    let output = transposed.reshaped([B, L, args.attentionHeads * args.resolvedHeadDimensions])
+    return oProj(output)
   }
 }
 
