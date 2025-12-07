@@ -117,7 +117,7 @@ actor KokoroTTS {
     for sentence in sentences {
       let audio = try await generateAudioForSentence(text: sentence, voice: voice, speed: speed)
       chunkCallback(audio)
-      MLX.GPU.clearCache()
+      MLXMemory.clearCache()
     }
   }
 
@@ -139,7 +139,7 @@ actor KokoroTTS {
       guard i < sentences.count else { return nil }
 
       let audio = try await self.generateAudioForSentence(text: sentences[i], voice: voice, speed: speed)
-      MLX.GPU.clearCache()
+      MLXMemory.clearCache()
       return audio
     }
   }

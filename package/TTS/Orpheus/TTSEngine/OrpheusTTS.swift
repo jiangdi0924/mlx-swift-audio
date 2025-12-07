@@ -275,7 +275,7 @@ actor OrpheusTTS {
       // Clear GPU cache periodically
       if (i + 1) % 50 == 0 {
         Profiler.time("GPU cache clear") {
-          MLX.GPU.clearCache()
+          MLXMemory.clearCache()
         }
       }
 

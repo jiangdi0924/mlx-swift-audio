@@ -10,15 +10,15 @@ let package = Package(
       name: "MLXAudio",
       targets: ["MLXAudio"],
     ),
-    // Kokoro plugin (depends on GPLv3-licensed espeak-ng)
+    // Separate Kokoro package (depends on GPLv3-licensed espeak-ng)
     .library(
       name: "Kokoro",
       targets: ["Kokoro"],
     ),
   ],
   dependencies: [
-    .package(url: "https://github.com/ml-explore/mlx-swift-lm.git", branch: "main"),
-    .package(url: "https://github.com/ml-explore/mlx-swift", from: "0.29.0"),
+    .package(url: "https://github.com/ml-explore/mlx-swift-lm", branch: "main"),
+    .package(url: "https://github.com/ml-explore/mlx-swift", revision: "9594dbe2736a6ba03fe0f11514d7265fd2f7ba77"),
     .package(url: "https://github.com/huggingface/swift-transformers", .upToNextMinor(from: "1.1.0")),
     // espeak-ng is GPLv3 licensed - only linked when using Kokoro
     // TODO: Switch back to upstream after https://github.com/espeak-ng/espeak-ng/pull/2327 is merged

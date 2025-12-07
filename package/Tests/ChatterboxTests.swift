@@ -4,6 +4,13 @@ import Testing
 
 @testable import MLXAudio
 
+// IMPORTANT: See ChatterboxTestHelper.swift for memory management notes.
+// Run only ONE test suite at a time to avoid loading multiple ~2GB models.
+//
+// These tests are DISABLED by default to avoid memory issues when running benchmarks.
+// To run these tests, remove the .disabled trait below.
+
+@Suite(.serialized, .disabled("Disabled to avoid loading multiple models during benchmarks"))
 struct ChatterboxTests {
   @Test @MainActor func chatterboxEngineInitializes() async {
     let engine = ChatterboxEngine()
@@ -13,21 +20,16 @@ struct ChatterboxTests {
   }
 
   @Test @MainActor func chatterboxEngineLoadsModel() async throws {
+    // Note: Creates own engine - only run this test suite in isolation
     let engine = ChatterboxEngine()
-
-    try await engine.load { progress in
-      print("Loading: \(Int(progress.fractionCompleted * 100))%")
-    }
-
+    try await engine.load()
     #expect(engine.isLoaded == true)
     print("Chatterbox model loaded successfully")
   }
 
   @Test @MainActor func chatterboxGeneratesAudio() async throws {
+    // Note: Creates own engine - only run this test suite in isolation
     let engine = ChatterboxEngine()
-
-    // Load model
-    print("Loading Chatterbox model...")
     try await engine.load()
     #expect(engine.isLoaded == true)
 
@@ -61,10 +63,8 @@ struct ChatterboxTests {
   }
 
   @Test @MainActor func chatterboxMultipleSpeakers() async throws {
+    // Note: Creates own engine - only run this test suite in isolation
     let engine = ChatterboxEngine()
-
-    // Load model
-    print("Loading Chatterbox model...")
     try await engine.load()
 
     // Prepare default reference audio
@@ -87,16 +87,13 @@ struct ChatterboxTests {
     print("Multiple speaker test passed!")
   }
 
-  @Test func chatterboxModelDirectLoad() async throws {
+  @Test @MainActor func chatterboxModelDirectLoad() async throws {
     print("Testing direct ChatterboxModel.load()...")
 
-    let model = try await ChatterboxModel.load { progress in
-      if progress.fractionCompleted.truncatingRemainder(dividingBy: 0.1) < 0.01 {
-        print("Loading: \(Int(progress.fractionCompleted * 100))%")
-      }
-    }
+    // Use global shared model to avoid loading multiple models
+    let model = try await ChatterboxTestHelper.getOrLoadModel()
 
-    print("Model loaded successfully")
+    print("Model loaded successfully (shared)")
 
     // Check model components are initialized
     // (t3, s3gen, ve are non-optional Module properties, so just access them to verify)

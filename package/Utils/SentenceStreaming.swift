@@ -57,7 +57,7 @@ func sentenceStreamingGenerate(
           )
           continuation.yield(chunk)
 
-          MLX.GPU.clearCache()
+          MLXMemory.clearCache()
         } catch {
           continuation.finish(throwing: error)
           return

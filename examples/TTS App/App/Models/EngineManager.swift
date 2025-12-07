@@ -93,7 +93,7 @@ final class EngineManager {
     loadingProgress = 0
     error = nil
 
-    MLX.GPU.set(cacheLimit: TTSConstants.Memory.gpuCacheLimit)
+    MLXMemory.configureForPlatform()
 
     do {
       try await currentEngine.load { [weak self] progress in
@@ -125,7 +125,6 @@ final class EngineManager {
     }
 
     error = nil
-    MLX.GPU.set(cacheLimit: TTSConstants.Memory.gpuCacheLimit)
 
     do {
       switch selectedProvider {

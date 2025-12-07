@@ -1,71 +1,82 @@
 // Multi-layer unidirectional LSTM for Chatterbox VoiceEncoder.
-// Uses MLX weight format after sanitization from PyTorch.
+// Uses optimized operations (addMM, split) matching MLX's built-in patterns.
+//
+// TODO: Once https://github.com/ml-explore/mlx-swift/pull/312 is merged,
+// consider replacing this with MLXNN.LSTM (bias will be loadable via @ParameterInfo).
 
 import Foundation
 import MLX
 import MLXNN
 
-// MARK: - LSTMCell
+// MARK: - OptimizedLSTMCell
 
-/// Single LSTM layer cell with MLX weight naming convention
-class LSTMCell: Module {
+/// Single LSTM layer with optimized operations and loadable bias parameter
+///
+/// Uses the same optimizations as MLX's built-in LSTM:
+/// - `addMM` for fused bias + matmul
+/// - `split` for efficient gate extraction
+class OptimizedLSTMCell: Module {
   let hiddenSize: Int
 
-  // MLX format weight names
-  @ParameterInfo(key: "Wx") var Wx: MLXArray // Input weights
-  @ParameterInfo(key: "Wh") var Wh: MLXArray // Hidden weights
-  @ParameterInfo(key: "bias") var bias: MLXArray // Combined bias
+  // MLX format weight names (matches built-in LSTM)
+  @ParameterInfo(key: "Wx") var Wx: MLXArray
+  @ParameterInfo(key: "Wh") var Wh: MLXArray
+  @ParameterInfo(key: "bias") var bias: MLXArray
 
   init(inputSize: Int, hiddenSize: Int) {
     self.hiddenSize = hiddenSize
-
-    // Initialize weights (will be loaded from checkpoint)
     _Wx.wrappedValue = MLXArray.zeros([4 * hiddenSize, inputSize])
     _Wh.wrappedValue = MLXArray.zeros([4 * hiddenSize, hiddenSize])
     _bias.wrappedValue = MLXArray.zeros([4 * hiddenSize])
   }
 
-  /// Process a single LSTM layer
+  /// Process sequence through LSTM layer using optimized operations
   func callAsFunction(
-    x: MLXArray,
-    hidden: MLXArray?,
-    cell: MLXArray?,
-  ) -> (MLXArray, MLXArray, MLXArray) {
-    let batchSize = x.shape[0]
-    let seqLen = x.shape[1]
+    _ x: MLXArray,
+    hidden: MLXArray? = nil,
+    cell: MLXArray? = nil,
+  ) -> (MLXArray, MLXArray) {
+    // Fused bias + matmul for input projection (like built-in LSTM)
+    var xProj = addMM(bias, x, Wx.T)
 
-    var h = hidden ?? MLXArray.zeros([batchSize, hiddenSize])
-    var c = cell ?? MLXArray.zeros([batchSize, hiddenSize])
+    var h: MLXArray! = hidden
+    var c: MLXArray! = cell
+    var allHidden = [MLXArray]()
+    var allCell = [MLXArray]()
 
-    // Pre-compute input projections: (batch, seq_len, 4*hidden)
-    let xProj = MLX.matmul(x, Wx.transposed()) + bias
+    let seqLen = xProj.dim(-2)
+    for index in 0 ..< seqLen {
+      var ifgo = xProj[.ellipsis, index, 0...]
+      if h != nil {
+        ifgo = addMM(ifgo, h, Wh.T)
+      }
 
-    var allHidden: [MLXArray] = []
+      // Use split for efficient gate extraction (like built-in LSTM)
+      let pieces = split(ifgo, parts: 4, axis: -1)
 
-    for t in 0 ..< seqLen {
-      let xT = xProj[0..., t, 0...]
-      let hProj = MLX.matmul(h, Wh.transposed())
-      let gates = xT + hProj
+      let i = sigmoid(pieces[0])
+      let f = sigmoid(pieces[1])
+      let g = tanh(pieces[2])
+      let o = sigmoid(pieces[3])
 
-      let i = sigmoid(gates[0..., 0 ..< hiddenSize])
-      let f = sigmoid(gates[0..., hiddenSize ..< 2 * hiddenSize])
-      let g = tanh(gates[0..., 2 * hiddenSize ..< 3 * hiddenSize])
-      let o = sigmoid(gates[0..., 3 * hiddenSize ..< 4 * hiddenSize])
-
-      c = f * c + i * g
+      if c != nil {
+        c = f * c + i * g
+      } else {
+        c = i * g
+      }
       h = o * tanh(c)
 
+      allCell.append(c)
       allHidden.append(h)
     }
 
-    let allH = MLX.stacked(allHidden, axis: 1)
-    return (allH, h, c)
+    return (stacked(allHidden, axis: -2), stacked(allCell, axis: -2))
   }
 }
 
 // MARK: - ChatterboxLSTM
 
-/// Multi-layer unidirectional LSTM that matches MLX's sanitized weight format
+/// Multi-layer unidirectional LSTM with optimized operations
 ///
 /// Weight naming follows MLX convention (after sanitization from PyTorch):
 /// - layers.0.Wx, layers.0.Wh, layers.0.bias for layer 0
@@ -76,32 +87,23 @@ class ChatterboxLSTM: Module {
   let hiddenSize: Int
   let numLayers: Int
 
-  // Use a layers array with MLX naming convention
-  @ModuleInfo(key: "layers") var layers: [LSTMCell]
+  @ModuleInfo(key: "layers") var layers: [OptimizedLSTMCell]
 
   init(inputSize: Int, hiddenSize: Int, numLayers: Int = 3) {
-    precondition(numLayers == 3, "ChatterboxLSTM currently only supports 3 layers")
-
     self.inputSize = inputSize
     self.hiddenSize = hiddenSize
     self.numLayers = numLayers
 
     // Create layers: first layer takes inputSize, rest take hiddenSize
-    var layerArray: [LSTMCell] = []
+    var layerArray: [OptimizedLSTMCell] = []
     for i in 0 ..< numLayers {
       let layerInputSize = i == 0 ? inputSize : hiddenSize
-      layerArray.append(LSTMCell(inputSize: layerInputSize, hiddenSize: hiddenSize))
+      layerArray.append(OptimizedLSTMCell(inputSize: layerInputSize, hiddenSize: hiddenSize))
     }
     _layers.wrappedValue = layerArray
   }
 
   /// Process sequence through all LSTM layers
-  /// - Parameters:
-  ///   - x: Input tensor of shape (batch, seq_len, input_size)
-  ///   - hidden: Optional tuple of (h0, c0) where each is (num_layers, batch, hidden_size)
-  /// - Returns: Tuple of (output, (hN, cN))
-  ///            output: (batch, seq_len, hidden_size)
-  ///            hN, cN: (num_layers, batch, hidden_size)
   func callAsFunction(
     _ x: MLXArray,
     hidden: (MLXArray, MLXArray)? = nil,
@@ -122,14 +124,13 @@ class ChatterboxLSTM: Module {
     var finalCell: [MLXArray] = []
 
     for i in 0 ..< numLayers {
-      let (out, hFinal, cFinal) = layers[i](
-        x: currentOutput,
-        hidden: hList[i],
-        cell: cList[i],
-      )
-      currentOutput = out
-      finalHidden.append(hFinal)
-      finalCell.append(cFinal)
+      let (allH, allC) = layers[i](currentOutput, hidden: hList[i], cell: cList[i])
+      currentOutput = allH
+
+      // Extract final timestep for h and c
+      let seqLen = allH.dim(-2)
+      finalHidden.append(allH[.ellipsis, seqLen - 1, 0...])
+      finalCell.append(allC[.ellipsis, seqLen - 1, 0...])
     }
 
     let hN = MLX.stacked(finalHidden, axis: 0)

@@ -529,7 +529,7 @@ public final class ChatterboxEngine: TTSEngine {
           )
           continuation.yield(chunk)
 
-          MLX.GPU.clearCache()
+          MLXMemory.clearCache()
         }
 
         continuation.finish()

@@ -1,5 +1,6 @@
 //  S3Gen decoder: converts speech tokens to waveforms
 
+import AVFoundation
 import Foundation
 import MLX
 import MLXNN
@@ -54,50 +55,77 @@ struct S3GenRefDict: @unchecked Sendable {
 
 // MARK: - Audio Resampling
 
-/// Resample audio using vectorized linear interpolation
-/// Uses MLX array operations for efficient GPU-accelerated resampling
+/// Resample audio using AVAudioConverter for high-quality resampling with anti-aliasing.
 func resampleAudio(_ audio: MLXArray, origSr: Int, targetSr: Int) -> MLXArray {
   if origSr == targetSr {
     return audio
   }
 
-  // Find GCD for rational resampling
-  func gcd(_ a: Int, _ b: Int) -> Int {
-    b == 0 ? a : gcd(b, a % b)
+  let inputSamples = audio.asArray(Float.self)
+
+  guard let inputFormat = AVAudioFormat(
+    commonFormat: .pcmFormatFloat32,
+    sampleRate: Double(origSr),
+    channels: 1,
+    interleaved: false,
+  ),
+    let outputFormat = AVAudioFormat(
+      commonFormat: .pcmFormatFloat32,
+      sampleRate: Double(targetSr),
+      channels: 1,
+      interleaved: false,
+    )
+  else {
+    fatalError("Failed to create audio format for resampling \(origSr) -> \(targetSr)")
   }
 
-  let g = gcd(origSr, targetSr)
-  let up = targetSr / g
-  let down = origSr / g
+  guard let converter = AVAudioConverter(from: inputFormat, to: outputFormat) else {
+    fatalError("Failed to create AVAudioConverter for resampling \(origSr) -> \(targetSr)")
+  }
 
-  let inputLen = audio.shape[0]
-  let outputLen = (inputLen * up) / down
+  let frameCount = AVAudioFrameCount(inputSamples.count)
+  guard let inputBuffer = AVAudioPCMBuffer(pcmFormat: inputFormat, frameCapacity: frameCount) else {
+    fatalError("Failed to create input buffer for resampling")
+  }
+  inputBuffer.frameLength = frameCount
 
-  // Vectorized linear interpolation using MLX operations
-  // Compute source positions for all output samples at once
-  let outputIndices = MLXArray(0 ..< outputLen).asType(.float32)
-  let srcPositions = outputIndices * Float(down) / Float(up)
+  if let channelData = inputBuffer.floatChannelData {
+    inputSamples.withUnsafeBufferPointer { ptr in
+      channelData[0].initialize(from: ptr.baseAddress!, count: inputSamples.count)
+    }
+  }
 
-  // Get floor indices (left samples)
-  let srcIndicesFloat = MLX.floor(srcPositions)
-  let srcIndices = srcIndicesFloat.asType(.int32)
+  let outputFrameCount = AVAudioFrameCount(
+    Double(inputSamples.count) * Double(targetSr) / Double(origSr) + 1)
+  guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: outputFrameCount)
+  else {
+    fatalError("Failed to create output buffer for resampling")
+  }
 
-  // Compute fractional parts for interpolation
-  let fracs = srcPositions - srcIndicesFloat
+  var error: NSError?
+  var inputConsumed = false
 
-  // Clamp indices to valid range
-  let maxIdx = MLXArray(Int32(inputLen - 1))
-  let idx0 = MLX.minimum(srcIndices, maxIdx)
-  let idx1 = MLX.minimum(srcIndices + 1, maxIdx)
+  let status = converter.convert(to: outputBuffer, error: &error) { _, outStatus in
+    if inputConsumed {
+      outStatus.pointee = .noDataNow
+      return nil
+    }
+    inputConsumed = true
+    outStatus.pointee = .haveData
+    return inputBuffer
+  }
 
-  // Gather values at left and right indices
-  let v0 = audio[idx0]
-  let v1 = audio[idx1]
+  if status == .error || error != nil {
+    fatalError("Audio resampling failed: \(error?.localizedDescription ?? "unknown error")")
+  }
 
-  // Linear interpolation: result = v0 * (1 - frac) + v1 * frac = v0 + frac * (v1 - v0)
-  let result = v0 + fracs * (v1 - v0)
+  guard let outputChannelData = outputBuffer.floatChannelData else {
+    fatalError("Failed to get output channel data after resampling")
+  }
 
-  return result
+  let outputLength = Int(outputBuffer.frameLength)
+  let resampled = Array(UnsafeBufferPointer(start: outputChannelData[0], count: outputLength))
+  return MLXArray(resampled)
 }
 
 // MARK: - S3Token2Mel

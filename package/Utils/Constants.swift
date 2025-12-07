@@ -24,13 +24,6 @@ public enum TTSConstants {
     public static let maxSampleValue: Float = 0.98
   }
 
-  // MARK: - Memory
-
-  public enum Memory {
-    /// GPU cache limit for MLX (bytes) - 20 MB
-    public static let gpuCacheLimit = 20 * 1024 * 1024
-  }
-
   // MARK: - Timing
 
   public enum Timing {

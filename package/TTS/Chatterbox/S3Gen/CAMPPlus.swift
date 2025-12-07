@@ -101,8 +101,33 @@ func kaldiFbankCAMPPlus(
   return fbank
 }
 
-/// HTK mel filterbank
-func melFiltersHTK(sampleRate: Int, nFft: Int, nMels: Int, fMin: Float, fMax: Float) -> MLXArray {
+// MARK: - Mel Filter Cache
+
+/// Thread-safe cache for precomputed mel filterbanks
+private final class MelFilterCache: @unchecked Sendable {
+  private var cache: [String: MLXArray] = [:]
+  private let lock = NSLock()
+
+  static let shared = MelFilterCache()
+
+  func get(sampleRate: Int, nFft: Int, nMels: Int, fMin: Float, fMax: Float) -> MLXArray {
+    let key = "\(sampleRate)_\(nFft)_\(nMels)_\(fMin)_\(fMax)"
+
+    lock.lock()
+    defer { lock.unlock() }
+
+    if let cached = cache[key] {
+      return cached
+    }
+
+    let filters = computeMelFiltersHTK(sampleRate: sampleRate, nFft: nFft, nMels: nMels, fMin: fMin, fMax: fMax)
+    cache[key] = filters
+    return filters
+  }
+}
+
+/// Compute HTK mel filterbank (internal, called once per configuration)
+private func computeMelFiltersHTK(sampleRate: Int, nFft: Int, nMels: Int, fMin: Float, fMax: Float) -> MLXArray {
   // HTK mel scale
   func hzToMel(_ hz: Float) -> Float {
     2595.0 * log10(1.0 + hz / 700.0)
@@ -120,26 +145,29 @@ func melFiltersHTK(sampleRate: Int, nFft: Int, nMels: Int, fMin: Float, fMax: Fl
   let hzPoints = melPoints.map { melToHz($0) }
   let binPoints = hzPoints.map { Int(round($0 * Float(nFft) / Float(sampleRate))) }
 
-  var filters = [[Float]](repeating: [Float](repeating: 0, count: nMels), count: nFft / 2 + 1)
+  // Build filters directly as a flat array for efficiency
+  let filterSize = (nFft / 2 + 1) * nMels
+  var filters = [Float](repeating: 0, count: filterSize)
 
   for m in 1 ... nMels {
     let fmMinus = binPoints[m - 1]
     let fm = binPoints[m]
     let fmPlus = binPoints[m + 1]
 
-    for k in fmMinus ..< fm {
-      if k < filters.count, k >= 0, fm != fmMinus {
-        filters[k][m - 1] = Float(k - fmMinus) / Float(fm - fmMinus)
-      }
+    for k in fmMinus ..< fm where k >= 0 && k < nFft / 2 + 1 && fm != fmMinus {
+      filters[k * nMels + (m - 1)] = Float(k - fmMinus) / Float(fm - fmMinus)
     }
-    for k in fm ..< fmPlus {
-      if k < filters.count, k >= 0, fmPlus != fm {
-        filters[k][m - 1] = Float(fmPlus - k) / Float(fmPlus - fm)
-      }
+    for k in fm ..< fmPlus where k >= 0 && k < nFft / 2 + 1 && fmPlus != fm {
+      filters[k * nMels + (m - 1)] = Float(fmPlus - k) / Float(fmPlus - fm)
     }
   }
 
-  return MLXArray(filters.flatMap { $0 }).reshaped([nFft / 2 + 1, nMels])
+  return MLXArray(filters).reshaped([nFft / 2 + 1, nMels])
+}
+
+/// HTK mel filterbank (cached)
+func melFiltersHTK(sampleRate: Int, nFft: Int, nMels: Int, fMin: Float, fMax: Float) -> MLXArray {
+  MelFilterCache.shared.get(sampleRate: sampleRate, nFft: nFft, nMels: nMels, fMin: fMin, fMax: fMax)
 }
 
 // MARK: - BasicResBlock
