@@ -30,18 +30,12 @@ public final class OuteTTSEngine: TTSEngine {
   // MARK: - Private Properties
 
   @ObservationIgnored private var outeTTS: OuteTTS?
-  @ObservationIgnored private let audioPlayer = AudioSamplePlayer(sampleRate: TTSProvider.outetts.sampleRate)
-  @ObservationIgnored private var generationTask: Task<Void, Never>?
-  @ObservationIgnored private var streamingCancelled: Bool = false
+  @ObservationIgnored private let playback = TTSPlaybackController(sampleRate: TTSProvider.outetts.sampleRate)
 
   // MARK: - Initialization
 
   public init() {
     Log.tts.debug("OuteTTSEngine initialized")
-  }
-
-  deinit {
-    generationTask?.cancel()
   }
 
   // MARK: - TTSEngine Protocol Methods
@@ -68,23 +62,17 @@ public final class OuteTTSEngine: TTSEngine {
   }
 
   public func stop() async {
-    streamingCancelled = true
-    generationTask?.cancel()
-    generationTask = nil
-    isGenerating = false
-
-    await audioPlayer.stop()
-    isPlaying = false
-
+    await playback.stop(
+      setGenerating: { self.isGenerating = $0 },
+      setPlaying: { self.isPlaying = $0 },
+    )
     Log.tts.debug("OuteTTSEngine stopped")
   }
 
   public func unload() async {
     await stop()
-
     outeTTS = nil
     isLoaded = false
-
     Log.tts.debug("OuteTTSEngine unloaded")
   }
 
@@ -95,14 +83,7 @@ public final class OuteTTSEngine: TTSEngine {
   // MARK: - Playback
 
   public func play(_ audio: AudioResult) async {
-    guard case let .samples(samples, _, _) = audio else {
-      Log.audio.warning("Cannot play AudioResult.file - use AudioFilePlayer instead")
-      return
-    }
-
-    isPlaying = true
-    await audioPlayer.play(samples: samples)
-    isPlaying = false
+    await playback.play(audio, setPlaying: { self.isPlaying = $0 })
   }
 
   // MARK: - Generation
@@ -116,59 +97,18 @@ public final class OuteTTSEngine: TTSEngine {
     _ text: String,
     speaker: OuteTTSSpeakerProfile? = nil,
   ) async throws -> AudioResult {
-    if !isLoaded {
-      try await load()
-    }
+    let (samples, processingTime) = try await playback.collectStream(
+      generateStreaming(text, speaker: speaker),
+    )
 
-    guard let outeTTS else {
-      throw TTSError.modelNotLoaded
-    }
+    Log.tts.timing("OuteTTS generation", duration: processingTime)
+    lastGeneratedAudioURL = playback.saveAudioFile(samples: samples, sampleRate: provider.sampleRate)
 
-    let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmedText.isEmpty else {
-      throw TTSError.invalidArgument("Text cannot be empty")
-    }
-
-    generationTask?.cancel()
-    isGenerating = true
-    generationTime = 0
-
-    do {
-      let result = try await outeTTS.generate(
-        text: trimmedText,
-        speaker: speaker,
-        temperature: temperature,
-        topP: topP,
-      )
-
-      generationTime = result.processingTime
-      isGenerating = false
-
-      Log.tts.timing("OuteTTS generation", duration: result.processingTime)
-      Log.tts.rtf("OuteTTS", rtf: result.realTimeFactor)
-
-      do {
-        let fileURL = try AudioFileWriter.save(
-          samples: result.audio,
-          sampleRate: result.sampleRate,
-          filename: TTSConstants.outputFilename,
-        )
-        lastGeneratedAudioURL = fileURL
-      } catch {
-        Log.audio.error("Failed to save audio file: \(error.localizedDescription)")
-      }
-
-      return .samples(
-        data: result.audio,
-        sampleRate: result.sampleRate,
-        processingTime: result.processingTime,
-      )
-
-    } catch {
-      isGenerating = false
-      Log.tts.error("OuteTTS generation failed: \(error.localizedDescription)")
-      throw TTSError.generationFailed(underlying: error)
-    }
+    return .samples(
+      data: samples,
+      sampleRate: provider.sampleRate,
+      processingTime: processingTime,
+    )
   }
 
   /// Generate and immediately play audio
@@ -197,61 +137,61 @@ public final class OuteTTSEngine: TTSEngine {
     _ text: String,
     speaker: OuteTTSSpeakerProfile? = nil,
   ) -> AsyncThrowingStream<AudioChunk, Error> {
-    AsyncThrowingStream { continuation in
-      let task = Task { @MainActor [weak self] in
-        guard let self else {
-          continuation.finish()
-          return
-        }
+    let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // Auto-load if needed
-        if !isLoaded {
-          do {
-            try await load()
-          } catch {
-            continuation.finish(throwing: error)
-            return
-          }
-        }
+    guard !trimmedText.isEmpty else {
+      return AsyncThrowingStream { $0.finish(throwing: TTSError.invalidArgument("Text cannot be empty")) }
+    }
 
-        guard let outeTTS else {
-          continuation.finish(throwing: TTSError.modelNotLoaded)
-          return
-        }
+    let sampleRate = provider.sampleRate
+    let temp = temperature
+    let top = topP
 
-        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedText.isEmpty else {
-          continuation.finish(throwing: TTSError.invalidArgument("Text cannot be empty"))
-          return
-        }
-
-        let startTime = Date()
-        let sampleRate = provider.sampleRate
-
-        do {
-          for try await samples in await outeTTS.generateStreaming(
-            text: trimmedText,
-            speaker: speaker,
-            temperature: temperature,
-            topP: topP,
-          ) {
-            guard !Task.isCancelled else { break }
-
-            let chunk = AudioChunk(
-              samples: samples,
-              sampleRate: sampleRate,
-              processingTime: Date().timeIntervalSince(startTime),
-            )
-            continuation.yield(chunk)
-          }
-          continuation.finish()
-        } catch {
-          continuation.finish(throwing: error)
-        }
+    return playback.createGenerationStream(
+      setGenerating: { self.isGenerating = $0 },
+      setGenerationTime: { self.generationTime = $0 },
+    ) { [weak self] in
+      guard let self else {
+        return AsyncThrowingStream { $0.finish() }
       }
 
-      continuation.onTermination = { _ in
-        task.cancel()
+      // Auto-load if needed
+      if !isLoaded {
+        try await load()
+      }
+
+      guard let outeTTS else {
+        throw TTSError.modelNotLoaded
+      }
+
+      // Wrap model stream to convert [Float] -> AudioChunk
+      let modelStream = await outeTTS.generateStreaming(
+        text: trimmedText,
+        speaker: speaker,
+        temperature: temp,
+        topP: top,
+      )
+
+      let startTime = Date()
+      return AsyncThrowingStream { continuation in
+        Task {
+          do {
+            for try await samples in modelStream {
+              guard !Task.isCancelled else { break }
+              let chunk = AudioChunk(
+                samples: samples,
+                sampleRate: sampleRate,
+                processingTime: Date().timeIntervalSince(startTime),
+              )
+              continuation.yield(chunk)
+            }
+            continuation.finish()
+          } catch is CancellationError {
+            continuation.finish()
+          } catch {
+            continuation.finish(throwing: error)
+          }
+        }
       }
     }
   }
@@ -265,54 +205,18 @@ public final class OuteTTSEngine: TTSEngine {
     _ text: String,
     speaker: OuteTTSSpeakerProfile? = nil,
   ) async throws -> AudioResult {
-    if !isLoaded {
-      try await load()
-    }
+    let (samples, processingTime) = try await playback.playStream(
+      generateStreaming(text, speaker: speaker),
+      setPlaying: { self.isPlaying = $0 },
+    )
 
-    // Stop any previous playback
-    await audioPlayer.stop()
-    streamingCancelled = false
+    lastGeneratedAudioURL = playback.saveAudioFile(samples: samples, sampleRate: provider.sampleRate)
 
-    isPlaying = true
-    isGenerating = true
-    var allSamples: [Float] = []
-    var totalProcessingTime: TimeInterval = 0
-
-    do {
-      for try await chunk in generateStreaming(text, speaker: speaker) {
-        if streamingCancelled { break }
-        allSamples.append(contentsOf: chunk.samples)
-        totalProcessingTime = chunk.processingTime
-        audioPlayer.enqueue(samples: chunk.samples, prebufferSeconds: 0)
-      }
-
-      // Streaming complete - audio continues playing from queue
-      isPlaying = false
-      isGenerating = false
-
-      if !allSamples.isEmpty {
-        do {
-          let fileURL = try AudioFileWriter.save(
-            samples: allSamples,
-            sampleRate: provider.sampleRate,
-            filename: TTSConstants.outputFilename,
-          )
-          lastGeneratedAudioURL = fileURL
-        } catch {
-          Log.audio.error("Failed to save audio file: \(error.localizedDescription)")
-        }
-      }
-
-      return .samples(
-        data: allSamples,
-        sampleRate: provider.sampleRate,
-        processingTime: totalProcessingTime,
-      )
-    } catch {
-      isPlaying = false
-      isGenerating = false
-      throw error
-    }
+    return .samples(
+      data: samples,
+      sampleRate: provider.sampleRate,
+      processingTime: processingTime,
+    )
   }
 
   // MARK: - Speaker Profile Creation

@@ -109,18 +109,12 @@ public final class KokoroEngine: TTSEngine {
   // MARK: - Private Properties
 
   @ObservationIgnored private var kokoroTTS: KokoroTTS?
-  @ObservationIgnored private let audioPlayer = AudioSamplePlayer(sampleRate: TTSProvider.kokoro.sampleRate)
-  @ObservationIgnored private var generationTask: Task<Void, Never>?
-  @ObservationIgnored private var streamingCancelled: Bool = false
+  @ObservationIgnored private let playback = TTSPlaybackController(sampleRate: TTSProvider.kokoro.sampleRate)
 
   // MARK: - Initialization
 
   public init() {
     Log.tts.debug("KokoroEngine initialized")
-  }
-
-  deinit {
-    generationTask?.cancel()
   }
 
   // MARK: - TTSEngine Protocol Methods
@@ -148,14 +142,10 @@ public final class KokoroEngine: TTSEngine {
   }
 
   public func stop() async {
-    streamingCancelled = true
-    generationTask?.cancel()
-    generationTask = nil
-    isGenerating = false
-
-    await audioPlayer.stop()
-    isPlaying = false
-
+    await playback.stop(
+      setGenerating: { self.isGenerating = $0 },
+      setPlaying: { self.isPlaying = $0 },
+    )
     Log.tts.debug("KokoroEngine stopped")
   }
 
@@ -163,7 +153,6 @@ public final class KokoroEngine: TTSEngine {
     await stop()
     kokoroTTS = nil
     isLoaded = false
-
     Log.tts.debug("KokoroEngine unloaded")
   }
 
@@ -174,14 +163,7 @@ public final class KokoroEngine: TTSEngine {
   // MARK: - Playback
 
   public func play(_ audio: AudioResult) async {
-    guard case let .samples(samples, _, _) = audio else {
-      Log.audio.warning("Cannot play AudioResult.file - use AudioFilePlayer instead")
-      return
-    }
-
-    isPlaying = true
-    await audioPlayer.play(samples: samples)
-    isPlaying = false
+    await playback.play(audio, setPlaying: { self.isPlaying = $0 })
   }
 
   // MARK: - Generation
@@ -197,68 +179,18 @@ public final class KokoroEngine: TTSEngine {
     voice: Voice,
     speed: Float = 1.0,
   ) async throws -> AudioResult {
-    if !isLoaded {
-      try await load()
-    }
+    let (samples, processingTime) = try await playback.collectStream(
+      generateStreaming(text, voice: voice, speed: speed),
+    )
 
-    guard let kokoroTTS else {
-      throw TTSError.modelNotLoaded
-    }
+    Log.tts.timing("Kokoro generation", duration: processingTime)
+    lastGeneratedAudioURL = playback.saveAudioFile(samples: samples, sampleRate: provider.sampleRate)
 
-    let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmedText.isEmpty else {
-      throw TTSError.invalidArgument("Text cannot be empty")
-    }
-
-    generationTask?.cancel()
-    isGenerating = true
-    generationTime = 0
-
-    let startTime = Date()
-    var allSamples: [Float] = []
-    var firstChunkTime: TimeInterval = 0
-
-    do {
-      for try await samples in try await kokoroTTS.generateStreaming(
-        text: trimmedText,
-        voice: voice,
-        speed: speed,
-      ) {
-        if firstChunkTime == 0 {
-          firstChunkTime = Date().timeIntervalSince(startTime)
-          generationTime = firstChunkTime
-        }
-
-        allSamples.append(contentsOf: samples)
-      }
-
-      isGenerating = false
-
-      let totalTime = Date().timeIntervalSince(startTime)
-      Log.tts.timing("Kokoro generation", duration: totalTime)
-
-      do {
-        let fileURL = try AudioFileWriter.save(
-          samples: allSamples,
-          sampleRate: provider.sampleRate,
-          filename: TTSConstants.outputFilename,
-        )
-        lastGeneratedAudioURL = fileURL
-      } catch {
-        Log.audio.error("Failed to save audio file: \(error.localizedDescription)")
-      }
-
-      return .samples(
-        data: allSamples,
-        sampleRate: provider.sampleRate,
-        processingTime: generationTime,
-      )
-
-    } catch {
-      isGenerating = false
-      Log.tts.error("Kokoro generation failed: \(error.localizedDescription)")
-      throw TTSError.generationFailed(underlying: error)
-    }
+    return .samples(
+      data: samples,
+      sampleRate: provider.sampleRate,
+      processingTime: processingTime,
+    )
   }
 
   /// Generate and immediately play audio
@@ -294,60 +226,51 @@ public final class KokoroEngine: TTSEngine {
       return AsyncThrowingStream { $0.finish(throwing: TTSError.invalidArgument("Text cannot be empty")) }
     }
 
-    return AsyncThrowingStream { continuation in
-      Task { @MainActor [weak self] in
-        guard let self else {
-          continuation.finish()
-          return
-        }
+    let sampleRate = provider.sampleRate
 
-        // Auto-load if needed
-        if !isLoaded {
+    return playback.createGenerationStream(
+      setGenerating: { self.isGenerating = $0 },
+      setGenerationTime: { self.generationTime = $0 },
+    ) { [weak self] in
+      guard let self else {
+        return AsyncThrowingStream { $0.finish() }
+      }
+
+      // Auto-load if needed
+      if !isLoaded {
+        try await load()
+      }
+
+      guard let kokoroTTS else {
+        throw TTSError.modelNotLoaded
+      }
+
+      // Wrap model stream to convert [Float] -> AudioChunk
+      let modelStream = try await kokoroTTS.generateStreaming(
+        text: trimmedText,
+        voice: voice,
+        speed: speed,
+      )
+
+      let startTime = Date()
+      return AsyncThrowingStream { continuation in
+        Task {
           do {
-            try await load()
+            for try await samples in modelStream {
+              guard !Task.isCancelled else { break }
+              let chunk = AudioChunk(
+                samples: samples,
+                sampleRate: sampleRate,
+                processingTime: Date().timeIntervalSince(startTime),
+              )
+              continuation.yield(chunk)
+            }
+            continuation.finish()
+          } catch is CancellationError {
+            continuation.finish()
           } catch {
             continuation.finish(throwing: error)
-            return
           }
-        }
-
-        guard let kokoroTTS else {
-          continuation.finish(throwing: TTSError.modelNotLoaded)
-          return
-        }
-
-        isGenerating = true
-        generationTime = 0
-
-        let startTime = Date()
-        var isFirst = true
-
-        do {
-          for try await samples in try await kokoroTTS.generateStreaming(
-            text: trimmedText,
-            voice: voice,
-            speed: speed,
-          ) {
-            if isFirst {
-              generationTime = Date().timeIntervalSince(startTime)
-              isFirst = false
-            }
-
-            let chunk = AudioChunk(
-              samples: samples,
-              sampleRate: provider.sampleRate,
-              processingTime: Date().timeIntervalSince(startTime),
-            )
-            continuation.yield(chunk)
-          }
-
-          isGenerating = false
-          continuation.finish()
-
-        } catch {
-          isGenerating = false
-          Log.tts.error("Kokoro streaming failed: \(error.localizedDescription)")
-          continuation.finish(throwing: TTSError.generationFailed(underlying: error))
         }
       }
     }
@@ -364,47 +287,18 @@ public final class KokoroEngine: TTSEngine {
     voice: Voice,
     speed: Float = 1.0,
   ) async throws -> AudioResult {
-    // Stop any previous playback
-    await audioPlayer.stop()
-    streamingCancelled = false
+    let (samples, processingTime) = try await playback.playStream(
+      generateStreaming(text, voice: voice, speed: speed),
+      setPlaying: { self.isPlaying = $0 },
+    )
 
-    isPlaying = true
-    var allSamples: [Float] = []
-    var totalProcessingTime: TimeInterval = 0
+    lastGeneratedAudioURL = playback.saveAudioFile(samples: samples, sampleRate: provider.sampleRate)
 
-    do {
-      for try await chunk in generateStreaming(text, voice: voice, speed: speed) {
-        if streamingCancelled { break }
-        allSamples.append(contentsOf: chunk.samples)
-        totalProcessingTime = chunk.processingTime
-        audioPlayer.enqueue(samples: chunk.samples, prebufferSeconds: 0)
-      }
-
-      // Streaming complete - audio continues playing from queue
-      isPlaying = false
-
-      if !allSamples.isEmpty {
-        do {
-          let fileURL = try AudioFileWriter.save(
-            samples: allSamples,
-            sampleRate: provider.sampleRate,
-            filename: TTSConstants.outputFilename,
-          )
-          lastGeneratedAudioURL = fileURL
-        } catch {
-          Log.audio.error("Failed to save audio file: \(error.localizedDescription)")
-        }
-      }
-
-      return .samples(
-        data: allSamples,
-        sampleRate: provider.sampleRate,
-        processingTime: totalProcessingTime,
-      )
-    } catch {
-      isPlaying = false
-      throw error
-    }
+    return .samples(
+      data: samples,
+      sampleRate: provider.sampleRate,
+      processingTime: processingTime,
+    )
   }
 }
 

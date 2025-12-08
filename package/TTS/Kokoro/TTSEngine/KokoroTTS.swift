@@ -125,6 +125,9 @@ actor KokoroTTS {
 
     var allAudio: [Float] = []
     for sentence in sentences {
+      // Check for cancellation between sentences
+      try Task.checkCancellation()
+
       let audioChunks = try await generateAudioChunks(text: sentence, voice: voice, speed: speed)
       for chunk in audioChunks {
         allAudio.append(contentsOf: chunk)
@@ -170,6 +173,9 @@ actor KokoroTTS {
       // Get next sentence
       let i = sentenceIndex.wrappingAdd(1, ordering: .relaxed).oldValue
       guard i < sentences.count else { return nil }
+
+      // Check for cancellation before generating each sentence
+      try Task.checkCancellation()
 
       let audioChunks = try await self.generateAudioChunks(text: sentences[i], voice: voice, speed: speed)
 

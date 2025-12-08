@@ -21,6 +21,7 @@ public final class AudioSamplePlayer {
   @ObservationIgnored private var audioFormat: AVAudioFormat!
   @ObservationIgnored private var hasStartedPlayback: Bool = false
   @ObservationIgnored private var playbackCompletionContinuation: CheckedContinuation<Void, Never>?
+  @ObservationIgnored private var drainContinuations: [CheckedContinuation<Void, Never>] = []
 
   private let sampleRate: Int
 
@@ -119,6 +120,16 @@ public final class AudioSamplePlayer {
         Task { @MainActor [weak self] in
           guard let self else { return }
           queuedSampleCount = max(0, queuedSampleCount - decrementAmount)
+
+          // When queue drains, mark playback complete and resume all waiting continuations
+          if queuedSampleCount == 0, hasStartedPlayback {
+            isPlaying = false
+            hasStartedPlayback = false
+            for continuation in drainContinuations {
+              continuation.resume()
+            }
+            drainContinuations.removeAll()
+          }
         }
       }
 
@@ -148,9 +159,13 @@ public final class AudioSamplePlayer {
 
   /// Stop playback and reset state
   public func stop() async {
-    // Resume any waiting continuation before stopping
+    // Resume any waiting continuations before stopping
     playbackCompletionContinuation?.resume()
     playbackCompletionContinuation = nil
+    for continuation in drainContinuations {
+      continuation.resume()
+    }
+    drainContinuations.removeAll()
 
     // Dispatch to background QoS to avoid priority inversion
     // (audio threads run at Default QoS, so calling from Background avoids inversion)
@@ -167,6 +182,25 @@ public final class AudioSamplePlayer {
     queuedSampleCount = 0
 
     Log.audio.debug("Audio playback stopped")
+  }
+
+  /// Wait for all enqueued audio to finish playing
+  ///
+  /// Call this after finishing `enqueue()` calls to wait for playback to complete.
+  /// Returns immediately if no audio is queued or playing.
+  /// Safe to call from multiple concurrent contexts.
+  public func awaitDrain() async {
+    // Quick check - if nothing playing, return immediately
+    guard hasStartedPlayback, queuedSampleCount > 0 else { return }
+
+    await withCheckedContinuation { continuation in
+      // Re-check condition atomically when setting continuation
+      if queuedSampleCount == 0 || !hasStartedPlayback {
+        continuation.resume()
+      } else {
+        drainContinuations.append(continuation)
+      }
+    }
   }
 
   /// Reset the audio engine (useful after interruptions)

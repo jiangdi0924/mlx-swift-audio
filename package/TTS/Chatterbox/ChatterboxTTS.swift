@@ -97,6 +97,11 @@ actor ChatterboxTTS {
     var allAudio: [Float] = []
 
     for chunk in chunks {
+      // Check for cancellation between chunks
+      if Task.isCancelled {
+        break
+      }
+
       let audioArray = model.generate(
         text: chunk,
         conds: conditionals,
@@ -166,6 +171,9 @@ actor ChatterboxTTS {
     var chunkIndex = 0
     return AsyncThrowingStream {
       guard chunkIndex < chunks.count else { return nil }
+
+      // Check for cancellation before generating each chunk
+      try Task.checkCancellation()
 
       let chunk = chunks[chunkIndex]
       chunkIndex += 1

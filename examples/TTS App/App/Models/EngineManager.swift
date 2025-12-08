@@ -144,6 +144,8 @@ final class EngineManager {
         case .chatterbox:
           return try await chatterboxEngine.generate(text, referenceAudio: chatterboxReferenceAudio)
       }
+    } catch is CancellationError {
+      throw CancellationError()
     } catch {
       let ttsError = (error as? TTSError) ?? TTSError.generationFailed(underlying: error)
       self.error = ttsError
@@ -184,6 +186,8 @@ final class EngineManager {
         case .chatterbox:
           return try await chatterboxEngine.sayStreaming(text, referenceAudio: chatterboxReferenceAudio)
       }
+    } catch is CancellationError {
+      throw CancellationError()
     } catch {
       let ttsError = (error as? TTSError) ?? TTSError.generationFailed(underlying: error)
       self.error = ttsError

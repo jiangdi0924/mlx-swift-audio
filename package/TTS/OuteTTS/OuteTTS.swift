@@ -419,7 +419,12 @@ actor OuteTTS {
     let repetitionContextSize = config.repetitionContextSize
 
     // Generation loop
-    for _ in 0 ..< maxToks {
+    for tokenIndex in 0 ..< maxToks {
+      // Check for cancellation periodically
+      if tokenIndex % 50 == 0 {
+        try Task.checkCancellation()
+      }
+
       // Apply temperature
       var scaledLogits = logits / max(temp, 1e-6)
 

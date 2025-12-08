@@ -406,6 +406,11 @@ actor MarvisTTS {
     var results: [TTSGenerationResult] = []
 
     for prompt in text {
+      // Check for cancellation between sentences
+      if Task.isCancelled {
+        throw CancellationError()
+      }
+
       let generationText = (base.text + " " + prompt).trimmingCharacters(in: .whitespaces)
       let seg = Segment(speaker: 0, text: generationText, audio: base.audio)
 
@@ -456,7 +461,12 @@ actor MarvisTTS {
 
     var startTime = CFAbsoluteTimeGetCurrent()
 
-    for _ in 0 ..< maxAudioFrames {
+    for frameIndex in 0 ..< maxAudioFrames {
+      // Check for cancellation periodically
+      if frameIndex % 25 == 0, Task.isCancelled {
+        throw CancellationError()
+      }
+
       let frame = try model.generateFrame(
         maxCodebooks: qualityLevel.codebookCount,
         tokens: currTokens,

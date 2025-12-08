@@ -29,9 +29,6 @@ final class AppState {
 
   private(set) var lastResult: AudioResult?
 
-  /// Flag to prevent auto-play after user stops
-  private var stopRequested: Bool = false
-
   // MARK: - Delegated State (from EngineManager)
 
   var selectedProvider: TTSProvider { engineManager.selectedProvider }
@@ -80,13 +77,10 @@ final class AppState {
   func generate() async {
     guard canGenerate else { return }
 
-    stopRequested = false
     statusMessage = "Generating..."
 
     do {
       lastResult = try await engineManager.generate(text: inputText, speed: speed)
-
-      guard !stopRequested else { return }
 
       if let result = lastResult {
         statusMessage = formatResultStatus(result)
@@ -95,6 +89,8 @@ final class AppState {
       if autoPlay, let result = lastResult {
         await engineManager.play(result)
       }
+    } catch is CancellationError {
+      statusMessage = "Stopped"
     } catch {
       statusMessage = error.localizedDescription
     }
@@ -104,7 +100,6 @@ final class AppState {
   func generateStreaming() async {
     guard canGenerate else { return }
 
-    stopRequested = false
     statusMessage = "Streaming..."
 
     do {
@@ -113,8 +108,10 @@ final class AppState {
       if let result = lastResult {
         statusMessage = formatResultStatus(result)
       }
+    } catch is CancellationError {
+      statusMessage = "Stopped"
     } catch {
-      if !stopRequested { statusMessage = error.localizedDescription }
+      statusMessage = error.localizedDescription
     }
   }
 
@@ -126,7 +123,6 @@ final class AppState {
 
   /// Stop generation and playback
   func stop() async {
-    stopRequested = true
     await engineManager.stop()
     statusMessage = "Stopped"
   }

@@ -181,6 +181,11 @@ actor OrpheusTTS {
 
     var allAudio: [Float] = []
     for sentence in sentences {
+      // Check for cancellation between sentences
+      if Task.isCancelled {
+        throw CancellationError()
+      }
+
       let result = try generateChunk(text: sentence, voice: voice, temperature: temperature, topP: topP)
       allAudio.append(contentsOf: result.audio)
       MLXMemory.clearCache()
@@ -253,6 +258,11 @@ actor OrpheusTTS {
     let maxOutputTokens = Self.maxTokenCount // Define how many tokens to generate at most
 
     while i < maxOutputTokens {
+      // Check for cancellation periodically
+      if i % 50 == 0, Task.isCancelled {
+        throw CancellationError()
+      }
+
       let iterationStart = Profiler.enabled ? CFAbsoluteTimeGetCurrent() : 0
 
       let historyForRepetition = Profiler.time("History preparation") {

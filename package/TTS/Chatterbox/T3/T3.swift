@@ -245,6 +245,11 @@ class T3: Module {
     // Key insight: start next forward pass BEFORE extracting token ID
     // This allows GPU to compute while we wait for .item()
     for step in 0 ..< maxNewTokens {
+      // Check for cancellation periodically
+      if step % 50 == 0, Task.isCancelled {
+        break
+      }
+
       // Get logits for last position
       var logits = speechHead(hidden[0..., -1 ..< hidden.shape[1], 0...])
       logits = logits.squeezed(axis: 1)
