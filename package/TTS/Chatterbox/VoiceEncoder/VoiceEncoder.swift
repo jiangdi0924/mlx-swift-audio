@@ -31,7 +31,7 @@ func getFrameStep(
 ) -> Int {
   precondition(overlap >= 0 && overlap < 1, "Overlap must be in [0, 1)")
 
-  var frameStep = if let rate {
+  let frameStep = if let rate {
     Int(round(Float(config.sampleRate) / rate / Float(config.vePartialFrames)))
   } else {
     Int(round(Float(config.vePartialFrames) * (1 - overlap)))

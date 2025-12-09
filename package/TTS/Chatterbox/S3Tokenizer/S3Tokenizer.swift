@@ -105,8 +105,8 @@ class MultiHeadAttention: Module {
     let D = q.shape[2]
     let scale = pow(Float(D / nHead), -0.25)
 
-    var qReshaped = q.reshaped([B, T, nHead, -1]).transposed(0, 2, 1, 3) * scale
-    var kReshaped = k.reshaped([B, T, nHead, -1]).transposed(0, 2, 1, 3) * scale
+    let qReshaped = q.reshaped([B, T, nHead, -1]).transposed(0, 2, 1, 3) * scale
+    let kReshaped = k.reshaped([B, T, nHead, -1]).transposed(0, 2, 1, 3) * scale
     let vReshaped = v.reshaped([B, T, nHead, -1]).transposed(0, 2, 1, 3)
 
     let output = MLXFast.scaledDotProductAttention(

@@ -70,7 +70,7 @@ class CausalMaskedDiffWithXvec: Module {
 
     // Concatenate prompt and new tokens
     var combinedToken = MLX.concatenated([promptToken, token], axis: 1)
-    var combinedTokenLen = promptTokenLen + tokenLen
+    let combinedTokenLen = promptTokenLen + tokenLen
 
     // Create mask
     let batchSize = combinedTokenLen.shape[0]
@@ -86,10 +86,10 @@ class CausalMaskedDiffWithXvec: Module {
     // Embed tokens
     let numEmbeddings = inputEmbedding.weight.shape[0]
     combinedToken = MLX.clip(combinedToken, min: 0, max: numEmbeddings - 1)
-    var tokenEmbed = inputEmbedding(combinedToken) * mask
+    let tokenEmbed = inputEmbedding(combinedToken) * mask
 
     // Encode
-    var (h, hLengths) = encoder(tokenEmbed, xsLens: combinedTokenLen.asType(.int32))
+    var (h, _) = encoder(tokenEmbed, xsLens: combinedTokenLen.asType(.int32))
 
     // Trim lookahead for streaming (unless finalizing)
     if !finalize {

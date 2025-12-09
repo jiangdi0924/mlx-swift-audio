@@ -54,9 +54,9 @@ public enum MLXMemory {
   /// Get current memory statistics
   public static func snapshot() -> Snapshot {
     Snapshot(
-      activeMB: GPU.activeMemory / 1024 / 1024,
-      cacheMB: GPU.cacheMemory / 1024 / 1024,
-      peakMB: GPU.peakMemory / 1024 / 1024,
+      activeMB: Memory.activeMemory / 1024 / 1024,
+      cacheMB: Memory.cacheMemory / 1024 / 1024,
+      peakMB: Memory.peakMemory / 1024 / 1024,
     )
   }
 
@@ -68,7 +68,7 @@ public enum MLXMemory {
   /// - Parameter cacheLimit: Maximum cache size in bytes. Pass `nil` for no limit.
   public static func configure(cacheLimit: Int?) {
     if let limit = cacheLimit {
-      GPU.set(cacheLimit: limit)
+      Memory.cacheLimit = limit
       Log.tts.debug("[MLXMemory] Cache limit set to \(limit / 1024 / 1024)MB")
     }
   }
@@ -95,7 +95,7 @@ public enum MLXMemory {
   /// Call this between heavy operations (e.g., between TTS generations)
   /// to release cached buffers and reduce memory footprint.
   public static func clearCache() {
-    GPU.clearCache()
+    Memory.clearCache()
     let stats = snapshot()
     Log.tts.debug("[MLXMemory] Cache cleared. Active: \(stats.activeMB)MB, Cache: \(stats.cacheMB)MB")
   }

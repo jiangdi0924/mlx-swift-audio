@@ -31,9 +31,6 @@ class Upsample1D: Module {
 
   func callAsFunction(_ inputs: MLXArray, inputLengths: MLXArray) -> (MLXArray, MLXArray) {
     // inputs: (B, C, T) - PyTorch format
-    let B = inputs.shape[0]
-    let C = inputs.shape[1]
-    let T = inputs.shape[2]
 
     // Upsample using nearest neighbor interpolation (repeat each timestep)
     var outputs = MLX.repeated(inputs, count: stride, axis: 2)

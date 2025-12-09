@@ -46,7 +46,7 @@ func padSequences(_ data: [MLXArray]) -> (MLXArray, MLXArray) {
   let batchSize = data.count
   let nMels = data[0].shape[0]
 
-  var paddedFeats = MLXArray.zeros([batchSize, nMels, maxLen], dtype: data[0].dtype)
+  let paddedFeats = MLXArray.zeros([batchSize, nMels, maxLen], dtype: data[0].dtype)
 
   for (i, feat) in data.enumerated() {
     let seqLen = feat.shape[1]

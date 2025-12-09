@@ -143,10 +143,8 @@ class T3: Module {
     let hiddenStates = tfmr(embeds, cache: cache)
 
     // Extract text and speech portions of hidden states
-    let B = textTokens.shape[0]
     let lenText = textTokens.shape[1]
     let lenSpeech = speechTokens.shape[1]
-    let hiddenDim = hiddenStates.shape[hiddenStates.ndim - 1]
 
     // Split hidden states by sequence position
     let textStart = lenCond

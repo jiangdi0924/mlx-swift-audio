@@ -277,7 +277,7 @@ class S3Token2Wav: S3Token2Mel {
     let (outputWavs, _) = mel2wav.inference(outputMels, cacheSource: hiftCacheSource)
 
     // Apply fade-in to reduce spillover artifacts
-    var result = outputWavs
+    let result = outputWavs
     let fadeLen = _trimFade.shape[0]
     if result.shape[1] >= fadeLen {
       result[0..., 0 ..< fadeLen] = result[0..., 0 ..< fadeLen] * _trimFade
@@ -327,7 +327,7 @@ class S3Token2Wav: S3Token2Mel {
     )
 
     // Apply fade-in to reduce spillover artifacts
-    var result = outputWavs
+    let result = outputWavs
     let fadeLen = _trimFade.shape[0]
     if result.shape[1] >= fadeLen {
       result[0..., 0 ..< fadeLen] = result[0..., 0 ..< fadeLen] * _trimFade

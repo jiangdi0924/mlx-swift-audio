@@ -228,7 +228,7 @@ class ConditionalDecoder: Module {
 
     // Up blocks
     var upBlocksArray: [UpBlock] = []
-    var channelsReversed = Array(channels.reversed()) + [channels[0]]
+    let channelsReversed = Array(channels.reversed()) + [channels[0]]
     for i in 0 ..< (channelsReversed.count - 1) {
       let inputChannel = channelsReversed[i] * 2
       let outCh = channelsReversed[i + 1]

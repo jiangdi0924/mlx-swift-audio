@@ -150,14 +150,13 @@ class SineGen: Module {
   func callAsFunction(_ f0: MLXArray) -> (MLXArray, MLXArray, MLXArray) {
     let shape = f0.shape
     let B = shape[0]
-    let T = shape[2]
 
     // Create frequency matrix for harmonics
     let harmonicMultipliers = MLXArray(1 ... (harmonicNum + 1)).reshaped([1, -1, 1])
     let FMat = f0 * harmonicMultipliers.asType(.float32) / Float(samplingRate)
 
     // Calculate phase
-    var thetaMat = 2 * Float.pi * (MLX.cumsum(FMat, axis: -1) % 1)
+    let thetaMat = 2 * Float.pi * (MLX.cumsum(FMat, axis: -1) % 1)
 
     // Random phase offset for each harmonic
     var phaseVec = MLXRandom.uniform(
@@ -242,7 +241,6 @@ class SourceModuleHnNSF: Module {
 func stftHiFiGAN(x: MLXArray, nFft: Int, hopLength: Int, window: MLXArray) -> (MLXArray, MLXArray) {
   let shape = x.shape
   let B = shape[0]
-  let T = shape[1]
 
   // Pad signal
   let padLength = nFft / 2
@@ -437,7 +435,7 @@ class HiFTGenerator: Module {
     // Source downsampling and resblocks
     var sourceDownsArray: [Conv1d] = []
     var sourceResArray: [HiFiGANResBlock] = []
-    var downsampleRates = [1] + Array(upsampleRates.reversed().dropLast())
+    let downsampleRates = [1] + Array(upsampleRates.reversed().dropLast())
     var downsampleCumRates: [Int] = []
     var cumProd = 1
     for rate in downsampleRates {
@@ -574,7 +572,7 @@ class HiFTGenerator: Module {
 
   /// Generate waveform from mel-spectrogram
   func callAsFunction(_ speechFeat: MLXArray, cacheSource: MLXArray? = nil) -> (MLXArray, MLXArray) {
-    var cache = cacheSource ?? MLXArray.zeros([1, 1, 0])
+    let cache = cacheSource ?? MLXArray.zeros([1, 1, 0])
 
     // Predict F0 from mel
     let f0 = f0Predictor(speechFeat)

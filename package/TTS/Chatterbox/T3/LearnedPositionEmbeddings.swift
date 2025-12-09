@@ -13,7 +13,7 @@ class LearnedPositionEmbeddings: Module {
 
     // Initialize with normal distribution (GPT-2 style)
     let newWeight = MLXRandom.normal([seqLen, modelDim]) * initScale
-    try? emb.update(parameters: ModuleParameters.unflattened(["weight": newWeight]), verify: .noUnusedKeys)
+    _ = try? emb.update(parameters: ModuleParameters.unflattened(["weight": newWeight]), verify: .noUnusedKeys)
   }
 
   /// Returns positional embeddings for index 0 up to the length of x.

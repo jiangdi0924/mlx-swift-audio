@@ -53,7 +53,7 @@ class PositionalEncoding: Module {
 
   func callAsFunction(_ x: MLXArray, offset: Int = 0) -> (MLXArray, MLXArray) {
     let posEmb = positionEncoding(offset: offset, size: x.shape[1])
-    var xOut = x * xscale + posEmb
+    let xOut = x * xscale + posEmb
 
     // Note: Dropout during training would be applied here
     // For inference, we skip dropout
