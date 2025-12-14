@@ -26,12 +26,17 @@ actor ChatterboxTTS {
   }
 
   /// Load ChatterboxTTS from Hugging Face Hub
+  ///
+  /// - Parameters:
+  ///   - quantization: Quantization level (fp16, 8bit, 4bit). Default is 4bit.
+  ///   - progressHandler: Optional callback for download progress
+  /// - Returns: Initialized ChatterboxTTS instance
   static func load(
-    repoId: String = ChatterboxModel.defaultRepoId,
+    quantization: ChatterboxQuantization = .q4,
     progressHandler: @escaping @Sendable (Progress) -> Void = { _ in },
   ) async throws -> ChatterboxTTS {
     let model = try await ChatterboxModel.load(
-      repoId: repoId,
+      quantization: quantization,
       progressHandler: progressHandler,
     )
     return ChatterboxTTS(model: model)

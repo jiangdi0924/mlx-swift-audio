@@ -62,6 +62,9 @@ public final class ChatterboxEngine: TTSEngine {
 
   // MARK: - Chatterbox-Specific Properties
 
+  /// Quantization level
+  public let quantization: ChatterboxQuantization
+
   /// Temperature for sampling (higher = more variation)
   public var temperature: Float = 0.8
 
@@ -91,8 +94,9 @@ public final class ChatterboxEngine: TTSEngine {
 
   // MARK: - Initialization
 
-  public init() {
-    Log.tts.debug("ChatterboxEngine initialized")
+  public init(quantization: ChatterboxQuantization = .q4) {
+    self.quantization = quantization
+    Log.tts.debug("ChatterboxEngine initialized with quantization: \(quantization.rawValue)")
   }
 
   // MARK: - TTSEngine Protocol Methods
@@ -103,10 +107,12 @@ public final class ChatterboxEngine: TTSEngine {
       return
     }
 
-    Log.model.info("Loading Chatterbox TTS model...")
+    let quantization = quantization
+    Log.model.info("Loading Chatterbox TTS model (\(quantization.rawValue))...")
 
     do {
       chatterboxTTS = try await ChatterboxTTS.load(
+        quantization: quantization,
         progressHandler: progressHandler ?? { _ in },
       )
 

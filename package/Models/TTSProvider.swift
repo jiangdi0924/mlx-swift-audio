@@ -1,5 +1,39 @@
 import Foundation
 
+// MARK: - ChatterboxQuantization
+
+/// Quantization level for Chatterbox models
+public enum ChatterboxQuantization: String, Sendable, CaseIterable {
+  /// 16-bit floating point (best quality, larger size)
+  case fp16
+
+  /// 8-bit quantization (good balance of quality and size)
+  case q8 = "8bit"
+
+  /// 4-bit quantization (smallest size, some quality tradeoff)
+  case q4 = "4bit"
+
+  /// Display name
+  public var displayName: String {
+    switch self {
+      case .fp16: "FP16 (Best Quality)"
+      case .q8: "8-bit (Balanced)"
+      case .q4: "4-bit (Smallest)"
+    }
+  }
+
+  /// Approximate size multiplier relative to fp16
+  public var sizeMultiplier: Float {
+    switch self {
+      case .fp16: 1.0
+      case .q8: 0.5
+      case .q4: 0.25
+    }
+  }
+}
+
+// MARK: - TTSProvider
+
 /// Available TTS providers
 public enum TTSProvider: String, CaseIterable, Identifiable, Sendable {
   case kokoro
