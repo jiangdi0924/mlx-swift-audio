@@ -1,14 +1,14 @@
 import Foundation
-import TiktokenSwift
+import SwiftTiktoken
 
-/// Whisper tokenizer using TiktokenSwift for BPE tokenization
+/// Whisper tokenizer using SwiftTiktoken for BPE tokenization
 ///
 /// Provides quick access to special tokens and language-specific encoding.
 /// Token IDs differ between multilingual and English-only models:
 /// - Multilingual: eot=50257, sot=50258, 99 language tokens, timestamp_begin=50364
 /// - English-only: eot=50256, sot=50257, NO language tokens, timestamp_begin=50363
 class WhisperTokenizer {
-  private let encoding: CoreBpe
+  private let encoding: CoreBPE
   private let specialTokens: [String: Int]
   let isMultilingual: Bool
 
@@ -24,7 +24,7 @@ class WhisperTokenizer {
   let noTimestamps: Int
   let timestampBegin: Int
 
-  private init(encoding: CoreBpe, specialTokens: [String: Int], isMultilingual: Bool) {
+  private init(encoding: CoreBPE, specialTokens: [String: Int], isMultilingual: Bool) {
     self.encoding = encoding
     self.specialTokens = specialTokens
     self.isMultilingual = isMultilingual
@@ -115,14 +115,14 @@ class WhisperTokenizer {
     // Token IDs differ between multilingual and English-only models
     let specialTokens = buildSpecialTokens(isMultilingual: isMultilingual)
 
-    // Convert to UInt32 for TiktokenSwift
+    // Convert to UInt32 for SwiftTiktoken
     let specialTokensUInt32 = specialTokens.mapValues { UInt32($0) }
 
     // Whisper uses this pattern for tokenization
     let pattern = "'s|'t|'re|'ve|'m|'ll|'d| ?\\p{L}+| ?\\p{N}+| ?[^\\s\\p{L}\\p{N}]+|\\s+(?!\\S)|\\s+"
 
-    // Create CoreBpe with Whisper vocabulary + special tokens
-    let whisperEncoding = try newCoreBpe(
+    // Create CoreBPE with Whisper vocabulary + special tokens
+    let whisperEncoding = try newCoreBPE(
       encoder: mergeableRanks,
       specialTokensEncoder: specialTokensUInt32,
       pattern: pattern
@@ -240,17 +240,17 @@ class WhisperTokenizer {
   ///
   /// - Parameter text: Input text
   /// - Returns: Token IDs
-  func encode(_ text: String) -> [Int] {
+  func encode(_ text: String) throws -> [Int] {
     // Use encodeOrdinary to avoid encoding special tokens in regular text
-    encoding.encodeOrdinary(text: text).map { Int($0) }
+    try encoding.encodeOrdinary(text: text).map { Int($0) }
   }
 
   /// Encode text with special tokens
   ///
   /// - Parameter text: Input text that may contain special tokens
   /// - Returns: Token IDs
-  func encodeWithSpecialTokens(_ text: String) -> [Int] {
-    encoding.encodeWithSpecialTokens(text: text).map { Int($0) }
+  func encodeWithSpecialTokens(_ text: String) throws -> [Int] {
+    try encoding.encodeWithSpecialTokens(text: text).map { Int($0) }
   }
 
   /// Decode token IDs to text
@@ -421,28 +421,24 @@ class WhisperTokenizer {
     var result = Set<Int>()
 
     // Allow hyphens and quotes between words, but not at the beginning
-    let dashTokens = encoding.encodeOrdinary(text: " -").map { Int($0) }
-    if !dashTokens.isEmpty {
+    if let dashTokens = try? encoding.encodeOrdinary(text: " -").map({ Int($0) }), !dashTokens.isEmpty {
       result.insert(dashTokens[0])
     }
-    let quoteTokens = encoding.encodeOrdinary(text: " '").map { Int($0) }
-    if !quoteTokens.isEmpty {
+    if let quoteTokens = try? encoding.encodeOrdinary(text: " '").map({ Int($0) }), !quoteTokens.isEmpty {
       result.insert(quoteTokens[0])
     }
 
     // Encode symbols and add their tokens
     for symbol in symbols + miscellaneous {
       // Try encoding the symbol alone
-      let tokens = encoding.encodeOrdinary(text: symbol).map { Int($0) }
-      if !tokens.isEmpty {
+      if let tokens = try? encoding.encodeOrdinary(text: symbol).map({ Int($0) }), !tokens.isEmpty {
         if tokens.count == 1 || miscellaneous.contains(symbol) {
           result.insert(tokens[0])
         }
       }
 
       // Try encoding with leading space
-      let spacedTokens = encoding.encodeOrdinary(text: " " + symbol).map { Int($0) }
-      if !spacedTokens.isEmpty {
+      if let spacedTokens = try? encoding.encodeOrdinary(text: " " + symbol).map({ Int($0) }), !spacedTokens.isEmpty {
         if spacedTokens.count == 1 || miscellaneous.contains(symbol) {
           result.insert(spacedTokens[0])
         }

@@ -200,7 +200,9 @@ class GreedyDecoder {
 
       // SuppressBlank: add blank tokens and EOT on first iteration only
       if iteration == 0 {
-        suppressTokenIds.append(contentsOf: tokenizer.encode(" "))
+        if let blankTokens = try? tokenizer.encode(" ") {
+          suppressTokenIds.append(contentsOf: blankTokens)
+        }
         suppressTokenIds.append(tokenizer.eot)
       }
 
