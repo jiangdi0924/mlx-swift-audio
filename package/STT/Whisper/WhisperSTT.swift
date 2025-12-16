@@ -183,7 +183,12 @@ actor WhisperSTT {
       // Temperature fallback loop (matches Python's decode_with_fallback)
       // Try increasing temperatures when output is too repetitive (high compression ratio)
       // or has low confidence (low avg_logprob)
-      let temperatureFallbackSequence: [Float] = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+      //
+      // Optimization: Use fewer temperature steps for very short segments where
+      // fallbacks are unlikely to help and just waste time
+      let temperatureFallbackSequence: [Float] = segmentDuration < 2.0
+        ? [0.0, 0.5, 1.0] // Short segments: 3 steps
+        : [0.0, 0.2, 0.4, 0.6, 0.8, 1.0] // Normal segments: 6 steps
       var result: DecodingResult!
 
       for currentTemperature in temperatureFallbackSequence {
@@ -339,7 +344,12 @@ actor WhisperSTT {
           }
         } else {
           let lastTimestampPos = tokens[consecutiveIndices.last! - 1] - tokenizer.timestampBegin
-          seek += lastTimestampPos * inputStride
+          // Sanity check: don't let hallucinated timestamps cause seek to jump beyond segment.
+          // The model can hallucinate timestamps pointing far into the future (e.g., 25s when
+          // only 2s of audio remains), which would cause seek to jump past the end of content.
+          let maxSeekAdvance = segmentSize
+          let timestampSeek = lastTimestampPos * inputStride
+          seek += min(timestampSeek, maxSeekAdvance)
         }
       } else {
         // Single segment (no consecutive timestamps)
@@ -396,6 +406,29 @@ actor WhisperSTT {
 
       // Filter out zero-length segments (WhisperKit approach)
       currentSegments = currentSegments.filter { $0.end > $0.start }
+
+      // Filter out segments with timestamps that exceed the segment window
+      // This catches hallucinations where model generates impossible timestamps (e.g., 20s in a 2s segment)
+      currentSegments = currentSegments.filter { segment in
+        let relativeEnd = Float(segment.end) - timeOffset
+        if relativeEnd > segmentDuration + 1.0 { // Allow 1s tolerance
+          Log.model.warning("Filtering hallucinated segment (timestamp \(String(format: "%.1f", relativeEnd))s exceeds \(String(format: "%.1f", segmentDuration))s window): '\(segment.text.prefix(50))'")
+          return false
+        }
+        return true
+      }
+
+      // Filter segments with very low confidence after temperature exhaustion
+      // These are likely hallucinations from silence/unclear audio at end of content
+      if result.temperature >= 0.8, result.avgLogProb < -2.0 {
+        currentSegments = currentSegments.filter { segment in
+          let trimmedText = segment.text.trimmingCharacters(in: .whitespaces)
+          if !trimmedText.isEmpty {
+            Log.model.warning("Filtering low-confidence segment (avgLogProb=\(String(format: "%.2f", result.avgLogProb)), temp=\(result.temperature)): '\(trimmedText.prefix(50))'")
+          }
+          return false
+        }
+      }
 
       // Add word timestamps if requested (batched for efficiency)
       if timestamps == .word {
