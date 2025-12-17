@@ -85,13 +85,22 @@ struct InputSection: View {
       if appState.isModelLoading {
         VStack(spacing: 4) {
           ProgressView(value: appState.loadingProgress)
-          Text("Loading \(appState.selectedModelSize.displayName)...")
+          Text("Loading \(loadingModelName)...")
             .font(.caption)
             .foregroundStyle(.secondary)
         }
       }
     }
     .padding()
+  }
+
+  private var loadingModelName: String {
+    switch appState.selectedProvider {
+      case .whisper:
+        appState.selectedWhisperModelSize.displayName
+      case .funASR:
+        appState.selectedFunASRModelType.displayName
+    }
   }
 
   private func formatDuration(_ duration: TimeInterval) -> String {

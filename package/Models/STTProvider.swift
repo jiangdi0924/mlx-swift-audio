@@ -3,6 +3,7 @@ import Foundation
 /// Available STT (Speech-to-Text) providers
 public enum STTProvider: String, CaseIterable, Identifiable, Sendable {
   case whisper
+  case funASR
 
   public var id: String { rawValue }
 
@@ -10,6 +11,7 @@ public enum STTProvider: String, CaseIterable, Identifiable, Sendable {
   public var displayName: String {
     switch self {
       case .whisper: "Whisper"
+      case .funASR: "Fun-ASR"
     }
   }
 
@@ -19,6 +21,7 @@ public enum STTProvider: String, CaseIterable, Identifiable, Sendable {
   public var sampleRate: Int {
     switch self {
       case .whisper: 16000
+      case .funASR: 16000
     }
   }
 
@@ -28,6 +31,7 @@ public enum STTProvider: String, CaseIterable, Identifiable, Sendable {
   public var supportsLanguageDetection: Bool {
     switch self {
       case .whisper: true
+      case .funASR: true
     }
   }
 
@@ -35,6 +39,7 @@ public enum STTProvider: String, CaseIterable, Identifiable, Sendable {
   public var supportsTranslation: Bool {
     switch self {
       case .whisper: true
+      case .funASR: true
     }
   }
 
@@ -42,6 +47,7 @@ public enum STTProvider: String, CaseIterable, Identifiable, Sendable {
   public var supportsWordTimestamps: Bool {
     switch self {
       case .whisper: false // Will be added in future phase
+      case .funASR: false // LLM-based model doesn't produce word timestamps
     }
   }
 
@@ -49,6 +55,7 @@ public enum STTProvider: String, CaseIterable, Identifiable, Sendable {
   public var supportsStreaming: Bool {
     switch self {
       case .whisper: false // Will be added in future phase
+      case .funASR: true // LLM-based model supports token streaming
     }
   }
 }

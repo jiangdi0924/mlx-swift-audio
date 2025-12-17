@@ -2,19 +2,31 @@ import Foundation
 import MLX
 import MLXAudio
 
-/// Manages WhisperEngine lifecycle and state
+/// Manages STT engine lifecycle and state for multiple providers
 @MainActor
 @Observable
 final class EngineManager {
-  // MARK: - Engine
+  // MARK: - Engines
 
-  /// Current Whisper engine instance (recreated when model/quantization changes)
+  /// Whisper engine (lazy-loaded when selected)
   private(set) var whisperEngine: WhisperEngine?
 
-  // MARK: - Configuration (what the loaded engine was created with)
+  /// Fun-ASR engine (lazy-loaded when selected)
+  private(set) var funASREngine: FunASREngine?
 
-  private(set) var loadedModelSize: WhisperModelSize?
-  private(set) var loadedQuantization: WhisperQuantization?
+  // MARK: - Provider Selection
+
+  /// Currently selected provider
+  private(set) var selectedProvider: STTProvider = .whisper
+
+  // MARK: - Configuration Tracking
+
+  /// Loaded Whisper configuration
+  private(set) var loadedWhisperModelSize: WhisperModelSize?
+  private(set) var loadedWhisperQuantization: WhisperQuantization?
+
+  /// Loaded Fun-ASR configuration
+  private(set) var loadedFunASRVariant: FunASRModelVariant?
 
   // MARK: - State
 
@@ -29,30 +41,83 @@ final class EngineManager {
 
   // MARK: - Computed Properties
 
-  var isLoaded: Bool { whisperEngine?.isLoaded ?? false }
-  var isTranscribing: Bool { whisperEngine?.isTranscribing ?? false }
-  var transcriptionTime: TimeInterval { whisperEngine?.transcriptionTime ?? 0 }
-
-  /// Check if engine needs to be recreated due to config change
-  func needsReload(modelSize: WhisperModelSize, quantization: WhisperQuantization) -> Bool {
-    loadedModelSize != modelSize || loadedQuantization != quantization
+  var isLoaded: Bool {
+    switch selectedProvider {
+      case .whisper:
+        whisperEngine?.isLoaded ?? false
+      case .funASR:
+        funASREngine?.isLoaded ?? false
+    }
   }
 
-  // MARK: - Engine Lifecycle
+  var isTranscribing: Bool {
+    switch selectedProvider {
+      case .whisper:
+        whisperEngine?.isTranscribing ?? false
+      case .funASR:
+        funASREngine?.isTranscribing ?? false
+    }
+  }
 
-  /// Load or reload the engine with specified configuration
-  func loadEngine(
+  var transcriptionTime: TimeInterval {
+    switch selectedProvider {
+      case .whisper:
+        whisperEngine?.transcriptionTime ?? 0
+      case .funASR:
+        funASREngine?.transcriptionTime ?? 0
+    }
+  }
+
+  /// Check if Whisper engine needs reload due to config change
+  func whisperNeedsReload(modelSize: WhisperModelSize, quantization: WhisperQuantization) -> Bool {
+    loadedWhisperModelSize != modelSize || loadedWhisperQuantization != quantization
+  }
+
+  /// Check if Fun-ASR engine needs reload due to config change
+  func funASRNeedsReload(variant: FunASRModelVariant) -> Bool {
+    loadedFunASRVariant != variant
+  }
+
+  // MARK: - Provider Selection
+
+  /// Switch to a different STT provider
+  func selectProvider(_ provider: STTProvider) async {
+    guard provider != selectedProvider else { return }
+
+    // Stop and unload the previous engine to free GPU memory
+    switch selectedProvider {
+      case .whisper:
+        if let engine = whisperEngine, engine.isLoaded {
+          await engine.unload()
+        }
+      case .funASR:
+        if let engine = funASREngine, engine.isLoaded {
+          await engine.unload()
+        }
+    }
+
+    selectedProvider = provider
+    error = nil
+  }
+
+  // MARK: - Whisper Engine Lifecycle
+
+  /// Load or reload Whisper engine with specified configuration
+  func loadWhisperEngine(
     modelSize: WhisperModelSize,
     quantization: WhisperQuantization
   ) async throws {
     // If already loaded with same config, skip
-    if isLoaded, loadedModelSize == modelSize, loadedQuantization == quantization {
+    if whisperEngine?.isLoaded == true,
+       loadedWhisperModelSize == modelSize,
+       loadedWhisperQuantization == quantization
+    {
       return
     }
 
     // Unload existing engine if config changed
     if whisperEngine != nil {
-      await unload()
+      await whisperEngine?.unload()
     }
 
     isLoading = true
@@ -62,7 +127,6 @@ final class EngineManager {
     MLXMemory.configureForPlatform()
 
     do {
-      // Create new engine with requested config
       whisperEngine = WhisperEngine(modelSize: modelSize, quantization: quantization)
 
       try await whisperEngine?.load { [weak self] progress in
@@ -71,8 +135,8 @@ final class EngineManager {
         }
       }
 
-      loadedModelSize = modelSize
-      loadedQuantization = quantization
+      loadedWhisperModelSize = modelSize
+      loadedWhisperQuantization = quantization
       isLoading = false
       loadingProgress = 1.0
     } catch {
@@ -85,8 +149,52 @@ final class EngineManager {
     }
   }
 
-  /// Transcribe audio file
-  func transcribe(
+  // MARK: - Fun-ASR Engine Lifecycle
+
+  /// Load or reload Fun-ASR engine with specified configuration
+  func loadFunASREngine(variant: FunASRModelVariant) async throws {
+    // If already loaded with same config, skip
+    if funASREngine?.isLoaded == true, loadedFunASRVariant == variant {
+      return
+    }
+
+    // Unload existing engine if config changed
+    if funASREngine != nil {
+      await funASREngine?.unload()
+    }
+
+    isLoading = true
+    loadingProgress = 0
+    error = nil
+
+    MLXMemory.configureForPlatform()
+
+    do {
+      funASREngine = FunASREngine(variant: variant)
+
+      try await funASREngine?.load { [weak self] progress in
+        Task { @MainActor in
+          self?.loadingProgress = progress.fractionCompleted
+        }
+      }
+
+      loadedFunASRVariant = variant
+      isLoading = false
+      loadingProgress = 1.0
+    } catch {
+      isLoading = false
+      loadingProgress = 0
+      funASREngine = nil
+      let sttError = STTError.modelLoadFailed(underlying: error)
+      self.error = sttError
+      throw sttError
+    }
+  }
+
+  // MARK: - Whisper Transcription
+
+  /// Transcribe audio file using Whisper
+  func whisperTranscribe(
     url: URL,
     language: Language?,
     timestamps: TimestampGranularity
@@ -113,8 +221,8 @@ final class EngineManager {
     }
   }
 
-  /// Translate audio file to English
-  func translate(
+  /// Translate audio file to English using Whisper
+  func whisperTranslate(
     url: URL,
     language: Language?,
     timestamps: TimestampGranularity
@@ -140,8 +248,8 @@ final class EngineManager {
     }
   }
 
-  /// Detect language of audio file
-  func detectLanguage(url: URL) async throws -> (Language, Float) {
+  /// Detect language of audio file using Whisper
+  func whisperDetectLanguage(url: URL) async throws -> (Language, Float) {
     guard let engine = whisperEngine, engine.isLoaded else {
       throw STTError.modelNotLoaded
     }
@@ -159,16 +267,134 @@ final class EngineManager {
     }
   }
 
-  /// Unload current engine
+  // MARK: - Fun-ASR Transcription
+
+  /// Transcribe audio file using Fun-ASR
+  func funASRTranscribe(
+    url: URL,
+    language: FunASRLanguage
+  ) async throws -> TranscriptionResult {
+    guard let engine = funASREngine, engine.isLoaded else {
+      throw STTError.modelNotLoaded
+    }
+
+    error = nil
+
+    do {
+      return try await engine.transcribe(
+        url,
+        language: language,
+        temperature: 0.0,
+        topP: 0.95,
+        topK: 0
+      )
+    } catch is CancellationError {
+      throw CancellationError()
+    } catch {
+      let sttError = (error as? STTError) ?? STTError.transcriptionFailed(underlying: error)
+      self.error = sttError
+      throw sttError
+    }
+  }
+
+  /// Translate audio file using Fun-ASR
+  func funASRTranslate(
+    url: URL,
+    sourceLanguage: FunASRLanguage,
+    targetLanguage: FunASRLanguage
+  ) async throws -> TranscriptionResult {
+    guard let engine = funASREngine, engine.isLoaded else {
+      throw STTError.modelNotLoaded
+    }
+
+    error = nil
+
+    do {
+      return try await engine.translate(
+        url,
+        sourceLanguage: sourceLanguage,
+        targetLanguage: targetLanguage,
+        temperature: 0.0,
+        topP: 0.95
+      )
+    } catch is CancellationError {
+      throw CancellationError()
+    } catch {
+      let sttError = (error as? STTError) ?? STTError.transcriptionFailed(underlying: error)
+      self.error = sttError
+      throw sttError
+    }
+  }
+
+  /// Stream transcription tokens using Fun-ASR
+  func funASRTranscribeStreaming(
+    url: URL,
+    language: FunASRLanguage
+  ) async throws -> AsyncThrowingStream<String, Error> {
+    guard let engine = funASREngine, engine.isLoaded else {
+      throw STTError.modelNotLoaded
+    }
+
+    error = nil
+
+    return try await engine.transcribeStreaming(
+      url,
+      language: language,
+      task: .transcribe,
+      targetLanguage: .english,
+      temperature: 0.0,
+      topP: 0.95,
+      topK: 0
+    )
+  }
+
+  /// Stream translation tokens using Fun-ASR
+  func funASRTranslateStreaming(
+    url: URL,
+    sourceLanguage: FunASRLanguage,
+    targetLanguage: FunASRLanguage
+  ) async throws -> AsyncThrowingStream<String, Error> {
+    guard let engine = funASREngine, engine.isLoaded else {
+      throw STTError.modelNotLoaded
+    }
+
+    error = nil
+
+    return try await engine.transcribeStreaming(
+      url,
+      language: sourceLanguage,
+      task: .translate,
+      targetLanguage: targetLanguage,
+      temperature: 0.0,
+      topP: 0.95,
+      topK: 0
+    )
+  }
+
+  // MARK: - Common Operations
+
+  /// Unload current provider's engine
   func unload() async {
-    await whisperEngine?.unload()
-    whisperEngine = nil
-    loadedModelSize = nil
-    loadedQuantization = nil
+    switch selectedProvider {
+      case .whisper:
+        await whisperEngine?.unload()
+        whisperEngine = nil
+        loadedWhisperModelSize = nil
+        loadedWhisperQuantization = nil
+      case .funASR:
+        await funASREngine?.unload()
+        funASREngine = nil
+        loadedFunASRVariant = nil
+    }
   }
 
   /// Stop current transcription
   func stop() async {
-    await whisperEngine?.stop()
+    switch selectedProvider {
+      case .whisper:
+        await whisperEngine?.stop()
+      case .funASR:
+        await funASREngine?.stop()
+    }
   }
 }

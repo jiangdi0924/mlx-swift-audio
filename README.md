@@ -12,6 +12,7 @@
 
 - Speech to text
   - [Whisper](https://github.com/openai/whisper)
+  - [Fun-ASR](https://github.com/modelscope/FunASR)
 
 ## Installation
 
@@ -88,6 +89,28 @@ let translation = try await whisper.translate(audioFileURL)
 // Detect language only
 let (language, confidence) = try await whisper.detectLanguage(audioFileURL)
 print("\(language.displayName) (\(confidence))")
+
+// Fun-ASR - LLM-based multilingual speech recognition
+let funASR = STT.funASR()
+try await funASR.load()
+
+// Transcribe audio file
+let result = try await funASR.transcribe(audioFileURL)
+print(result.text)
+
+// Transcribe with language hint
+let result = try await funASR.transcribe(audioFileURL, language: .chinese)
+
+// Translate to English (use MLT variant for best results)
+let funASRmlt = STT.funASR(modelType: .mltNano, quantization: .q4)
+try await funASRmlt.load()
+let translation = try await funASRmlt.translate(audioFileURL)
+
+// Stream transcription as tokens are generated
+let stream = try await funASR.transcribeStreaming(audioFileURL)
+for try await text in stream {
+    print(text, terminator: "")
+}
 ```
 
 ## Building

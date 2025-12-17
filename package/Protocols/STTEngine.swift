@@ -82,4 +82,33 @@ public enum STT {
   ) -> WhisperEngine {
     WhisperEngine(modelSize: model, quantization: quantization)
   }
+
+  /// Fun-ASR: LLM-based multilingual speech recognition
+  ///
+  /// Combines SenseVoice encoder with Qwen3 decoder for high-quality
+  /// transcription and translation.
+  ///
+  /// - Parameter variant: Model variant specification. Default is nano4bit.
+  /// - Returns: Configured FunASREngine instance
+  public static func funASR(
+    variant: FunASRModelVariant = .nano4bit
+  ) -> FunASREngine {
+    FunASREngine(variant: variant)
+  }
+
+  /// Fun-ASR: LLM-based multilingual speech recognition
+  ///
+  /// Combines SenseVoice encoder with Qwen3 decoder for high-quality
+  /// transcription and translation.
+  ///
+  /// - Parameters:
+  ///   - modelType: Model type (.nano for transcription, .mltNano for translation)
+  ///   - quantization: Quantization level (.q4, .q8, or .fp16)
+  /// - Returns: Configured FunASREngine instance
+  public static func funASR(
+    modelType: FunASRModelType = .nano,
+    quantization: FunASRQuantization = .q4
+  ) -> FunASREngine {
+    FunASREngine(modelType: modelType, quantization: quantization)
+  }
 }

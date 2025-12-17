@@ -4,6 +4,7 @@ import SwiftUI
 /// Picker for selecting STT task type
 struct TaskPickerView: View {
   @Binding var selectedTask: STTTask
+  let provider: STTProvider
   let isEnglishOnlyModel: Bool
   let isDisabled: Bool
 
@@ -15,14 +16,26 @@ struct TaskPickerView: View {
     }
     .pickerStyle(.menu)
     .disabled(isDisabled)
+    .onChange(of: provider) { _, newProvider in
+      // Reset to transcribe if current task not available for new provider
+      if !selectedTask.isAvailable(for: newProvider) {
+        selectedTask = .transcribe
+      }
+    }
   }
 
   private var availableTasks: [STTTask] {
-    if isEnglishOnlyModel {
-      // English-only models can't translate
-      return [.transcribe, .detectLanguage]
+    STTTask.allCases.filter { task in
+      // Check provider support
+      guard task.isAvailable(for: provider) else { return false }
+
+      // For Whisper, English-only models can't translate
+      if provider == .whisper, isEnglishOnlyModel, task == .translate {
+        return false
+      }
+
+      return true
     }
-    return STTTask.allCases
   }
 }
 
