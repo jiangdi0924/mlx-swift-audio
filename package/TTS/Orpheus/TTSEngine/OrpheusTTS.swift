@@ -289,9 +289,21 @@ actor OrpheusTTS {
         Log.perf.debug("⏱️ [PROFILE] Token sampling (iter \(i)): \(samplingDuration.formatted(decimals: 2)) ms")
       }
 
-      // Only extract the Int32 value when we absolutely need it for CPU operations
+      // Double-buffering: Start forward pass BEFORE extracting token
+      // GPU computes next step while we do CPU operations
+      let forwardPassStart = Profiler.enabled ? CFAbsoluteTimeGetCurrent() : 0
+      let nextInput = nextTokenArray.reshaped([1, 1])
+      state.logits = model(nextInput, cache: state.cache)
+      state.logits = state.logits.squeezed(axis: 1)
+      asyncEval(state.logits, state.cache)
+      let forwardPassEnd = Profiler.enabled ? CFAbsoluteTimeGetCurrent() : 0
+      let forwardPassDuration = Profiler.enabled ? (forwardPassEnd - forwardPassStart) * 1000 : 0
+      if Profiler.enabled {
+        Log.perf.debug("⏱️ [PROFILE] Forward pass (iter \(i)): \(forwardPassDuration.formatted(decimals: 2)) ms")
+      }
+
+      // NOW extract the token - GPU is already computing next step
       let nextToken: Int32 = Profiler.time("Token extraction") {
-        // This operation forces GPU->CPU transfer and might be a sync point
         let result: Int32 = nextTokenArray[0].item()
         return result
       }
@@ -315,21 +327,9 @@ actor OrpheusTTS {
       // Add to history for repetition penalty *after* it's been sampled
       Profiler.time("History update") {
         generatedTokensForPenalty.append(nextToken)
-        if generatedTokensForPenalty.count > Self.repetitionContextSize { // Keep history to context size
+        if generatedTokensForPenalty.count > Self.repetitionContextSize {
           generatedTokensForPenalty.removeFirst()
         }
-      }
-
-      // Prepare for the next iteration - only process the last token
-      let forwardPassStart = Profiler.enabled ? CFAbsoluteTimeGetCurrent() : 0
-      let nextInput = nextTokenArray.reshaped([1, 1])
-      state.logits = model(nextInput, cache: state.cache)
-      // Squeeze the sequence dimension since we're processing single tokens
-      state.logits = state.logits.squeezed(axis: 1)
-      let forwardPassEnd = Profiler.enabled ? CFAbsoluteTimeGetCurrent() : 0
-      let forwardPassDuration = Profiler.enabled ? (forwardPassEnd - forwardPassStart) * 1000 : 0
-      if Profiler.enabled {
-        Log.perf.debug("⏱️ [PROFILE] Forward pass (iter \(i)): \(forwardPassDuration.formatted(decimals: 2)) ms")
       }
 
       // Clear GPU cache periodically

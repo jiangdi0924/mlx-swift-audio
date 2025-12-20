@@ -5,6 +5,8 @@
 
 import Foundation
 import MLX
+import MLXFast
+import MLXLMCommon
 import MLXNN
 
 // MARK: - Qwen2 Configuration
@@ -40,34 +42,6 @@ struct Qwen2Config: Codable, Sendable {
   init() {}
 }
 
-// MARK: - KV Cache
-
-/// Key-Value cache for autoregressive generation in CosyVoice2
-/// Named to avoid conflict with MLXLMCommon KVCache protocol
-class CosyVoice2KVCache {
-  var keys: MLXArray?
-  var values: MLXArray?
-  var offset: Int = 0
-
-  func update(keys: MLXArray, values: MLXArray) -> (MLXArray, MLXArray) {
-    if let existingKeys = self.keys, let existingValues = self.values {
-      self.keys = MLX.concatenated([existingKeys, keys], axis: 2)
-      self.values = MLX.concatenated([existingValues, values], axis: 2)
-    } else {
-      self.keys = keys
-      self.values = values
-    }
-    offset += keys.shape[2]
-    return (self.keys!, self.values!)
-  }
-
-  func reset() {
-    keys = nil
-    values = nil
-    offset = 0
-  }
-}
-
 // MARK: - Qwen2 Attention
 
 /// Attention module for Qwen2
@@ -96,7 +70,7 @@ class Qwen2Attention: Module {
     rope = RoPE(dimensions: headDim, traditional: config.ropeTraditional, base: config.ropeTheta)
   }
 
-  func callAsFunction(_ x: MLXArray, mask: MLXArray?, cache: CosyVoice2KVCache?) -> MLXArray {
+  func callAsFunction(_ x: MLXArray, mask: MLXArray?, cache: KVCacheSimple?) -> MLXArray {
     let (B, L, _) = (x.shape[0], x.shape[1], x.shape[2])
 
     var queries = wq(x)
@@ -118,24 +92,18 @@ class Qwen2Attention: Module {
       (keys, values) = cache.update(keys: keys, values: values)
     }
 
-    // Expand KV heads if needed (GQA)
-    if config.numKeyValueHeads < config.numAttentionHeads {
-      let nRep = config.numAttentionHeads / config.numKeyValueHeads
-      keys = MLX.repeated(keys, count: nRep, axis: 1)
-      values = MLX.repeated(values, count: nRep, axis: 1)
-    }
+    // Use optimized scaled dot product attention with automatic GQA handling
+    // mask: .causal for prefill (L > 1), .none for single-token generation
+    let output = MLXFast.scaledDotProductAttention(
+      queries: queries,
+      keys: keys,
+      values: values,
+      scale: scale,
+      mask: L > 1 ? .causal : .none
+    )
+    .transposed(0, 2, 1, 3)
+    .reshaped(B, L, -1)
 
-    // Attention
-    var scores = MLX.matmul(queries, keys.transposed(0, 1, 3, 2)) * scale
-
-    if let mask {
-      scores = scores + mask
-    }
-
-    let weights = MLX.softmax(scores, axis: -1)
-    var output = MLX.matmul(weights, values)
-
-    output = output.transposed(0, 2, 1, 3).reshaped(B, L, -1)
     return wo(output)
   }
 }
@@ -175,7 +143,7 @@ class Qwen2TransformerBlock: Module {
     _postAttentionLayerNorm.wrappedValue = RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
   }
 
-  func callAsFunction(_ x: MLXArray, mask: MLXArray?, cache: CosyVoice2KVCache?) -> MLXArray {
+  func callAsFunction(_ x: MLXArray, mask: MLXArray?, cache: KVCacheSimple?) -> MLXArray {
     var r = attention(inputLayerNorm(x), mask: mask, cache: cache)
     let h = x + r
     r = mlp(postAttentionLayerNorm(h))
@@ -189,7 +157,7 @@ class Qwen2TransformerBlock: Module {
 class Qwen2ModelInner: Module {
   @ModuleInfo(key: "embed_tokens") var embedTokens: Embedding
 
-  let layers: [Qwen2TransformerBlock]
+  @ModuleInfo var layers: [Qwen2TransformerBlock]
   @ModuleInfo(key: "norm") var norm: RMSNorm
 
   init(_ config: Qwen2Config) {
@@ -199,64 +167,27 @@ class Qwen2ModelInner: Module {
     for _ in 0 ..< config.numHiddenLayers {
       layersArray.append(Qwen2TransformerBlock(config))
     }
-    layers = layersArray
+    _layers.wrappedValue = layersArray
 
     _norm.wrappedValue = RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
   }
 
   /// Forward with token input
-  func callAsFunction(_ inputs: MLXArray, cache: [CosyVoice2KVCache]?) -> MLXArray {
+  func callAsFunction(_ inputs: MLXArray, cache: [KVCacheSimple]?) -> MLXArray {
     let h = embedTokens(inputs)
     return forward(embeddings: h, cache: cache)
   }
 
   /// Forward with embedding input (for CosyVoice2)
-  func forward(embeddings: MLXArray, cache: [CosyVoice2KVCache]?) -> MLXArray {
+  func forward(embeddings: MLXArray, cache: [KVCacheSimple]?) -> MLXArray {
     var h = embeddings
 
-    // Create causal mask
-    let mask = createCausalMask(h: h, cache: cache?.first)
-
+    // scaledDotProductAttention handles causal masking internally
     for (i, layer) in layers.enumerated() {
-      h = layer(h, mask: mask, cache: cache?[i])
+      h = layer(h, mask: nil, cache: cache?[i])
     }
 
     return norm(h)
-  }
-
-  /// Create causal attention mask using vectorized MLX operations
-  ///
-  /// Creates a lower-triangular mask where position i can attend to positions [0, offset+i].
-  /// Uses broadcasting for efficient GPU computation instead of Python-style loops.
-  ///
-  /// - Parameters:
-  ///   - h: Hidden states (B, T, D)
-  ///   - cache: Optional KV cache containing offset
-  /// - Returns: Causal mask (1, 1, T, totalLen) with 0 for allowed positions, -1e9 for masked
-  private func createCausalMask(h: MLXArray, cache: CosyVoice2KVCache?) -> MLXArray? {
-    let T = h.shape[1]
-    if T == 1 {
-      return nil // No mask needed for single token
-    }
-
-    let offset = cache?.offset ?? 0
-    let totalLen = T + offset
-
-    // Vectorized causal mask creation using broadcasting
-    // rows: [0, 1, 2, ..., T-1] expanded to (T, 1)
-    // cols: [0, 1, 2, ..., totalLen-1] expanded to (1, totalLen)
-    // mask[i,j] = 0 if j <= offset + i, else -1e9
-    let rows = MLXArray(0 ..< Int32(T)).expandedDimensions(axis: 1)
-    let cols = MLXArray(0 ..< Int32(totalLen)).expandedDimensions(axis: 0)
-
-    // Causal condition: column index <= row index + offset
-    // This creates a lower-triangular mask shifted by offset
-    let causalMask = cols .<= (rows + Int32(offset))
-
-    // Convert boolean mask to attention bias: true -> 0, false -> -1e9
-    let mask = MLX.where(causalMask, MLXArray(Float(0)), MLXArray(Float(-1e9)))
-
-    return mask.reshaped(1, 1, T, totalLen)
   }
 }
 
@@ -265,12 +196,12 @@ class Qwen2ModelInner: Module {
 /// Wrapper around Qwen2 model for CosyVoice2
 /// Provides access to embeddings and single-step forward for autoregressive generation
 class Qwen2Encoder: Module {
-  let model: Qwen2ModelInner
+  @ModuleInfo var model: Qwen2ModelInner
   let config: Qwen2Config
 
   init(config: Qwen2Config) {
     self.config = config
-    model = Qwen2ModelInner(config)
+    _model.wrappedValue = Qwen2ModelInner(config)
   }
 
   /// Access the token embedding layer
@@ -301,8 +232,8 @@ class Qwen2Encoder: Module {
   ///   - xs: Input embeddings (B, T, D) - typically T=1 for generation
   ///   - cache: List of CosyVoice2KVCache objects, one per layer
   /// - Returns: Tuple of (hidden_states, cache)
-  func forwardOneStep(_ xs: MLXArray, cache: [CosyVoice2KVCache]?) -> (MLXArray, [CosyVoice2KVCache]) {
-    let cacheList = cache ?? (0 ..< config.numHiddenLayers).map { _ in CosyVoice2KVCache() }
+  func forwardOneStep(_ xs: MLXArray, cache: [KVCacheSimple]?) -> (MLXArray, [KVCacheSimple]) {
+    let cacheList = cache ?? (0 ..< config.numHiddenLayers).map { _ in KVCacheSimple() }
 
     let hiddenStates = model.forward(embeddings: xs, cache: cacheList)
 
@@ -452,16 +383,15 @@ class Qwen2LM: Module {
     maxLen: Int
   ) throws -> [Int] {
     var outTokens: [Int] = []
-    var cache: [CosyVoice2KVCache]? = nil
+    var cache: [KVCacheSimple]? = nil
     var currentInput = lmInput
 
-    for i in 0 ..< maxLen {
-      // Forward one step
-      let (yPred, newCache) = llm.forwardOneStep(currentInput, cache: cache)
-      cache = newCache
+    // Initial forward pass (prefill)
+    var (yPred, newCache) = llm.forwardOneStep(currentInput, cache: cache)
+    cache = newCache
 
-      // Get logits for last position (last token in sequence)
-      // Note: Use single index (not range) to reduce dimension like Python's y_pred[:, -1, :]
+    for i in 0 ..< maxLen {
+      // Get logits for last position
       let lastIdx = yPred.shape[1] - 1
       let logits = llmDecoder(yPred[0..., lastIdx, 0...])
       let logp = MLX.log(MLX.softmax(logits, axis: -1))
@@ -479,16 +409,26 @@ class Qwen2LM: Module {
         break
       }
 
-      // Prepare input for next step
-      currentInput = speechEmbedding.weight[topIds].reshaped(1, 1, -1)
-
       // Skip special tokens (fill_token, etc.) - don't yield them
       if topIds > speechTokenSize {
+        // Still need to forward pass for next iteration
+        currentInput = speechEmbedding.weight[topIds].reshaped(1, 1, -1)
+        (yPred, newCache) = llm.forwardOneStep(currentInput, cache: cache)
+        cache = newCache
+        asyncEval(yPred, cache)
         continue
       }
 
       // Add the token
       outTokens.append(topIds)
+
+      // Forward pass for next step
+      currentInput = speechEmbedding.weight[topIds].reshaped(1, 1, -1)
+      (yPred, newCache) = llm.forwardOneStep(currentInput, cache: cache)
+      cache = newCache
+
+      // Pipeline: evaluate async while preparing next iteration
+      asyncEval(yPred, cache)
     }
 
     return outTokens

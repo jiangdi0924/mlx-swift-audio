@@ -49,8 +49,6 @@ struct CosyVoice3UnitTests {
     let freqsInterleaved = stacked.reshaped([stacked.shape[0], stacked.shape[1], -1])
     print("freqsInterleaved shape: \(freqsInterleaved.shape)")
     #expect(freqsInterleaved.shape == [1, 938, 64])
-
-    print("Rotary embedding computation test passed!")
   }
 
   /// Test the actual RotaryEmbedding class
@@ -67,8 +65,6 @@ struct CosyVoice3UnitTests {
     print("  scale: \(scale)")
 
     #expect(freqs.shape == [1, 938, 64], "Expected freqs shape [1, 938, 64], got \(freqs.shape)")
-
-    print("RotaryEmbedding class test passed!")
   }
 
   /// Test model loading
@@ -83,7 +79,6 @@ struct CosyVoice3UnitTests {
 
     // Access the model's flow decoder and test its rotary embedding
     // This tests that weights were loaded correctly
-    print("Model loading test passed!")
   }
 
   /// Test DiT forward pass in isolation (without loaded weights)
@@ -130,8 +125,6 @@ struct CosyVoice3UnitTests {
     #expect(output.shape[0] == batchSize)
     #expect(output.shape[1] == melDim)
     #expect(output.shape[2] == seqLen)
-
-    print("DiT forward test passed!")
   }
 }
 
@@ -437,7 +430,5 @@ struct CosyVoice3IntegrationTests {
 
     // Cleanup
     await whisper.unload()
-
-    print("\n=== All CosyVoice3 voice matching tests passed! ===")
   }
 }

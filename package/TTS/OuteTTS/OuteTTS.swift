@@ -420,6 +420,9 @@ actor OuteTTS {
     generatedTokensHistory.reserveCapacity(maxToks)
     let repetitionContextSize = config.repetitionContextSize
 
+    // Double-buffering: start async eval before generation loop
+    asyncEval(logits, cache)
+
     // Generation loop
     for tokenIndex in 0 ..< maxToks {
       // Check for cancellation periodically
@@ -462,10 +465,17 @@ actor OuteTTS {
         scaledLogits = filtered1D.expandedDimensions(axis: 0)
       }
 
-      eval(scaledLogits)
-
       // Sample next token
       let nextTokenArray = MLXRandom.categorical(scaledLogits, count: 1)
+
+      // Double-buffering: start forward pass BEFORE extracting token ID
+      // GPU computes next step while we do CPU operations
+      let nextInput = nextTokenArray.reshaped([1, 1])
+      logits = model(nextInput, cache: cache)
+      logits = logits.squeezed(axis: 1)
+      asyncEval(logits, cache)
+
+      // NOW extract token ID - GPU is already computing next step
       let nextToken: Int32 = nextTokenArray[0].item()
 
       // Check for EOS
@@ -474,13 +484,6 @@ actor OuteTTS {
       }
 
       generatedTokensHistory.append(nextToken)
-
-      // Forward pass with single token
-      let nextInput = nextTokenArray.reshaped([1, 1])
-      logits = model(nextInput, cache: cache)
-      logits = logits.squeezed(axis: 1)
-
-      eval(logits)
     }
 
     let generatedTokens = generatedTokensHistory.map { Int($0) }

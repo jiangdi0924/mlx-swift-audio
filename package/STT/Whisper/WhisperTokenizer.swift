@@ -56,7 +56,7 @@ class WhisperTokenizer {
   let isMultilingual: Bool
 
   // Special token IDs - set based on whether this is multilingual or English-only
-  // CRITICAL: These values must match Python mlx-audio tokenizer exactly
+  // These values must match Python mlx-audio tokenizer exactly
   let eot: Int
   let sot: Int
   let translate: Int

@@ -11,7 +11,9 @@ Compile a list of potential optimizations and other improvements, and discuss ea
 ## Optimization Techniques
 
 ### MLX Built-ins
-- Use optimized kernels: `RoPE`, `layerNorm`, `rmsNorm`, `scaledDotProductAttention` (available as free functions in the MLX module)
+- Use optimized kernels: `RoPE`, `layerNorm`, `rmsNorm`, `scaledDotProductAttention`
+- Use `MLXFast.scaledDotProductAttention` with mask enums (`.causal`, `.none`) for attention with automatic GQA handling
+- Replace manual matmul attention patterns with SDPA
 
 ### Vectorization
 - Avoid Python-style loops; use vectorized MLX operations (`MLX.where`, `MLX.split`, etc.)
@@ -23,9 +25,9 @@ Compile a list of potential optimizations and other improvements, and discuss ea
 - Move invariant computations outside iteration loops
 
 ### KV Cache for Attention
-- Cache key/value pairs across autoregressive decoding steps
+- Use `KVCacheSimple` from `MLXLMCommon` with pre-allocated buffers and `cache.update(keys:values:)`
+- Avoid concatenation-based caching which allocates new arrays each step
 - Cache encoder outputs for cross-attention (computed once, reused every step)
-- Implement context window limiting to bound memory for long sequences
 
 ### Memory Management
 - Configure GPU cache limits with `MLXMemory.configure(cacheLimit:)`
@@ -33,9 +35,9 @@ Compile a list of potential optimizations and other improvements, and discuss ea
 - Use platform-appropriate memory limits (iOS vs macOS)
 
 ### Computation Graph Control
-- Use strategic `.eval()` calls to force computation and prevent graph explosion
+- Use `.eval()` to force synchronous computation and prevent graph explosion
 - Evaluate intermediate results before caching or reuse
-- Avoid building unbounded lazy computation graphs in loops
+- **Double-buffering**: Call `asyncEval()` after forward pass, before extracting token with `.item()`. If sampling returns Int (forces eval), do prefill before loop and `asyncEval(yPred)` after forward pass to overlap with next iteration. Check Python reference first.
 
 ### Zero-Copy Operations
 - Use view operations (`reshaped`, `transposed`, `expandedDimensions`) which don't copy

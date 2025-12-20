@@ -5,6 +5,7 @@
 
 import Foundation
 import MLX
+import MLXLMCommon
 
 /// Actor wrapper for Fun-ASR model that provides thread-safe transcription
 actor FunASRSTT {
@@ -114,21 +115,36 @@ actor FunASRSTT {
       eosTokenId: eosId
     )
 
-    // Generate tokens
+    // Generate tokens with double-buffering
     var tokens: [Int] = []
-    var cache: [(MLXArray, MLXArray)?]? = nil
+    var cache: [KVCacheSimple]? = nil
+
+    // Compute first step
+    var (logits, newCache) = model.llm(
+      inputIds: nil,
+      inputEmbeddings: inputEmbeddings,
+      mask: nil,
+      cache: cache
+    )
+    cache = newCache
+    asyncEval(logits, cache)
 
     for _ in 0 ..< actualMaxTokens {
-      let (logits, newCache) = model.llm(
+      // Sample current token
+      let token = model.sampleNextToken(logits, temperature: temperature, topP: topP, topK: topK)
+
+      // Prepare next input and start computing ahead (before extracting token ID)
+      inputEmbeddings = model.llm.getInputEmbeddings()(token.expandedDimensions(axis: 0).expandedDimensions(axis: 0))
+      (logits, newCache) = model.llm(
         inputIds: nil,
         inputEmbeddings: inputEmbeddings,
         mask: nil,
         cache: cache
       )
       cache = newCache
+      asyncEval(logits, cache)
 
-      // Sample next token
-      let token = model.sampleNextToken(logits, temperature: temperature, topP: topP, topK: topK)
+      // NOW extract token ID - GPU is already computing next step
       let tokenId = token.item(Int.self)
 
       // Check for EOS
@@ -137,9 +153,6 @@ actor FunASRSTT {
       }
 
       tokens.append(tokenId)
-
-      // Prepare next input (just the new token embedding)
-      inputEmbeddings = model.llm.getInputEmbeddings()(token.expandedDimensions(axis: 0).expandedDimensions(axis: 0))
     }
 
     // Decode tokens
@@ -216,20 +229,36 @@ actor FunASRSTT {
             eosTokenId: eosId
           )
 
-          var cache: [(MLXArray, MLXArray)?]? = nil
+          var cache: [KVCacheSimple]? = nil
+
+          // Compute first step (double-buffering)
+          var (logits, newCache) = model.llm(
+            inputIds: nil,
+            inputEmbeddings: inputEmbeddings,
+            mask: nil,
+            cache: cache
+          )
+          cache = newCache
+          asyncEval(logits, cache)
 
           for _ in 0 ..< actualMaxTokens {
             try Task.checkCancellation()
 
-            let (logits, newCache) = model.llm(
+            // Sample current token
+            let token = model.sampleNextToken(logits, temperature: temperature, topP: topP, topK: topK)
+
+            // Prepare next input and start computing ahead
+            inputEmbeddings = model.llm.getInputEmbeddings()(token.expandedDimensions(axis: 0).expandedDimensions(axis: 0))
+            (logits, newCache) = model.llm(
               inputIds: nil,
               inputEmbeddings: inputEmbeddings,
               mask: nil,
               cache: cache
             )
             cache = newCache
+            asyncEval(logits, cache)
 
-            let token = model.sampleNextToken(logits, temperature: temperature, topP: topP, topK: topK)
+            // NOW extract token ID - GPU is already computing next step
             let tokenId = token.item(Int.self)
 
             if tokenizer.isEosToken(tokenId) {
@@ -237,8 +266,6 @@ actor FunASRSTT {
             }
 
             continuation.yield(tokenId)
-
-            inputEmbeddings = model.llm.getInputEmbeddings()(token.expandedDimensions(axis: 0).expandedDimensions(axis: 0))
           }
 
           MLX.Memory.clearCache()

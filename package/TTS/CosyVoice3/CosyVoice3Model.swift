@@ -145,7 +145,7 @@ class CosyVoice3Model: Module {
     return audio
   }
 
-  /// Full TTS pipeline: text -> audio
+  /// Full TTS pipeline: text -> audio (zero-shot mode)
   func synthesize(
     text: MLXArray,
     textLen: MLXArray,
@@ -161,7 +161,12 @@ class CosyVoice3Model: Module {
     maxTokenTextRatio: Float = 20.0,
     minTokenTextRatio: Float = 2.0
   ) throws -> MLXArray {
+    let totalStart = CFAbsoluteTimeGetCurrent()
+
     // Step 1: Generate speech tokens
+    print("[LLM] Starting token generation (zero-shot)...")
+    let llmStart = CFAbsoluteTimeGetCurrent()
+
     let tokens = try generateTokens(
       text: text,
       textLen: textLen,
@@ -174,6 +179,9 @@ class CosyVoice3Model: Module {
       minTokenTextRatio: minTokenTextRatio
     )
 
+    let llmTime = CFAbsoluteTimeGetCurrent() - llmStart
+    print("[LLM] Generated \(tokens.count) tokens in \(String(format: "%.2f", llmTime))s (\(String(format: "%.1f", Double(tokens.count) / llmTime)) tokens/s)")
+
     if tokens.isEmpty {
       throw CosyVoice3Error.invalidInput("No tokens generated")
     }
@@ -183,6 +191,9 @@ class CosyVoice3Model: Module {
     let tokenLen = MLXArray([Int32(tokens.count)])
 
     // Step 2: Convert tokens to mel spectrogram
+    print("[Flow] Starting flow model...")
+    let flowStart = CFAbsoluteTimeGetCurrent()
+
     let (mel, _) = try tokensToMel(
       tokens: tokenArray,
       tokenLen: tokenLen,
@@ -195,8 +206,20 @@ class CosyVoice3Model: Module {
       nTimesteps: nTimesteps
     )
 
+    let flowTime = CFAbsoluteTimeGetCurrent() - flowStart
+    print("[Flow] Completed in \(String(format: "%.2f", flowTime))s")
+
     // Step 3: Convert mel to audio
+    print("[HiFi-GAN] Converting mel to audio...")
+    let hiStart = CFAbsoluteTimeGetCurrent()
+
     let audio = try melToAudio(mel: mel)
+
+    let hiTime = CFAbsoluteTimeGetCurrent() - hiStart
+    print("[HiFi-GAN] Completed in \(String(format: "%.2f", hiTime))s")
+
+    let totalTime = CFAbsoluteTimeGetCurrent() - totalStart
+    print("[TIMING SUMMARY] Total: \(String(format: "%.2f", totalTime))s | LLM: \(String(format: "%.2f", llmTime))s | Flow: \(String(format: "%.2f", flowTime))s | HiFi-GAN: \(String(format: "%.2f", hiTime))s")
 
     return audio
   }
@@ -255,11 +278,16 @@ class CosyVoice3Model: Module {
     maxTokenTextRatio: Float = 20.0,
     minTokenTextRatio: Float = 2.0
   ) throws -> MLXArray {
+    let totalStart = CFAbsoluteTimeGetCurrent()
+
     // Generate tokens WITHOUT prompt context
     let emptyPromptText = MLXArray.zeros([1, 0], dtype: .int32)
     let emptyPromptTextLen = MLXArray([Int32(0)])
     let emptySpeechToken = MLXArray.zeros([1, 0], dtype: .int32)
     let emptySpeechTokenLen = MLXArray([Int32(0)])
+
+    print("[LLM] Starting token generation...")
+    let llmStart = CFAbsoluteTimeGetCurrent()
 
     let tokens = try generateTokens(
       text: text,
@@ -273,18 +301,20 @@ class CosyVoice3Model: Module {
       minTokenTextRatio: minTokenTextRatio
     )
 
+    let llmTime = CFAbsoluteTimeGetCurrent() - llmStart
+    print("[LLM] Generated \(tokens.count) tokens in \(String(format: "%.2f", llmTime))s (\(String(format: "%.1f", Double(tokens.count) / llmTime)) tokens/s)")
+
     if tokens.isEmpty {
       throw CosyVoice3Error.invalidInput("No tokens generated")
     }
-
-    print("[Flow] Starting flow model with \(tokens.count) tokens")
-    let flowStart = CFAbsoluteTimeGetCurrent()
 
     let tokenArray = MLXArray(tokens.map { Int32($0) }).reshaped(1, -1)
     let tokenLen = MLXArray([Int32(tokens.count)])
 
     // Flow model uses prompt for speaker identity
-    print("[Flow] Calling tokensToMel...")
+    print("[Flow] Starting flow model...")
+    let flowStart = CFAbsoluteTimeGetCurrent()
+
     let (mel, _) = try tokensToMel(
       tokens: tokenArray,
       tokenLen: tokenLen,
@@ -298,13 +328,21 @@ class CosyVoice3Model: Module {
     )
 
     let flowTime = CFAbsoluteTimeGetCurrent() - flowStart
-    print("[Flow] tokensToMel completed in \(String(format: "%.2f", flowTime))s, mel shape: \(mel.shape)")
+    print("[Flow] Completed in \(String(format: "%.2f", flowTime))s, mel shape: \(mel.shape)")
 
     print("[HiFi-GAN] Converting mel to audio...")
     let hiStart = CFAbsoluteTimeGetCurrent()
     let audio = try melToAudio(mel: mel)
     let hiTime = CFAbsoluteTimeGetCurrent() - hiStart
     print("[HiFi-GAN] Completed in \(String(format: "%.2f", hiTime))s, audio shape: \(audio.shape)")
+
+    let totalTime = CFAbsoluteTimeGetCurrent() - totalStart
+    let audioSamples = audio.shape[0]
+    let audioDuration = Double(audioSamples) / Double(sampleRate)
+    let rtf = totalTime / audioDuration
+
+    print("[TIMING SUMMARY] Total: \(String(format: "%.2f", totalTime))s | LLM: \(String(format: "%.2f", llmTime))s (\(String(format: "%.0f", llmTime / totalTime * 100))%) | Flow: \(String(format: "%.2f", flowTime))s (\(String(format: "%.0f", flowTime / totalTime * 100))%) | HiFi-GAN: \(String(format: "%.2f", hiTime))s (\(String(format: "%.0f", hiTime / totalTime * 100))%)")
+    print("[TIMING SUMMARY] Audio: \(String(format: "%.2f", audioDuration))s | RTF: \(String(format: "%.2f", rtf))")
 
     return audio
   }

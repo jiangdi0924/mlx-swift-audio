@@ -528,6 +528,9 @@ final class MarvisModel: Module {
         let Wi = take2DHead(audioHead, index: i - 1)
         let ciLogits = matmul(lastDec, Wi) // [B, vocab_audio]
 
+        // Trigger async GPU evaluation to keep pipeline full
+        asyncEval(ciLogits)
+
         let ciSampleVec = sampler(ciLogits) // [B]
         let ciSample = expandedDimensions(ciSampleVec, axis: -1) // [B, 1]
         let ciEmbed = _embedAudio(codebook: i, tokens: ciSample) // [B, 1, dBackbone]

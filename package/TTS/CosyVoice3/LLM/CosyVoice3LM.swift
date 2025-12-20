@@ -5,34 +5,9 @@
 
 import Foundation
 import MLX
+import MLXFast
+import MLXLMCommon
 import MLXNN
-
-// MARK: - KV Cache
-
-/// Key-Value cache for autoregressive generation in CosyVoice3
-class CosyVoice3KVCache {
-  var keys: MLXArray?
-  var values: MLXArray?
-  var offset: Int = 0
-
-  func update(keys: MLXArray, values: MLXArray) -> (MLXArray, MLXArray) {
-    if let existingKeys = self.keys, let existingValues = self.values {
-      self.keys = MLX.concatenated([existingKeys, keys], axis: 2)
-      self.values = MLX.concatenated([existingValues, values], axis: 2)
-    } else {
-      self.keys = keys
-      self.values = values
-    }
-    offset += keys.shape[2]
-    return (self.keys!, self.values!)
-  }
-
-  func reset() {
-    keys = nil
-    values = nil
-    offset = 0
-  }
-}
 
 // MARK: - Qwen2 Configuration
 
@@ -95,7 +70,7 @@ class CosyVoice3Attention: Module {
     rope = RoPE(dimensions: headDim, traditional: config.ropeTraditional, base: config.ropeTheta)
   }
 
-  func callAsFunction(_ x: MLXArray, mask: MLXArray?, cache: CosyVoice3KVCache?) -> MLXArray {
+  func callAsFunction(_ x: MLXArray, mask: MLXArray?, cache: KVCacheSimple?) -> MLXArray {
     let (B, L, _) = (x.shape[0], x.shape[1], x.shape[2])
 
     var queries = wq(x)
@@ -117,24 +92,18 @@ class CosyVoice3Attention: Module {
       (keys, values) = cache.update(keys: keys, values: values)
     }
 
-    // Expand KV heads if needed (GQA)
-    if config.numKeyValueHeads < config.numAttentionHeads {
-      let nRep = config.numAttentionHeads / config.numKeyValueHeads
-      keys = MLX.repeated(keys, count: nRep, axis: 1)
-      values = MLX.repeated(values, count: nRep, axis: 1)
-    }
+    // Use optimized scaled dot product attention with automatic GQA handling
+    // mask: .causal for prefill (L > 1), .none for single-token generation
+    let output = MLXFast.scaledDotProductAttention(
+      queries: queries,
+      keys: keys,
+      values: values,
+      scale: scale,
+      mask: L > 1 ? .causal : .none
+    )
+    .transposed(0, 2, 1, 3)
+    .reshaped(B, L, -1)
 
-    // Attention
-    var scores = MLX.matmul(queries, keys.transposed(0, 1, 3, 2)) * scale
-
-    if let mask {
-      scores = scores + mask
-    }
-
-    let weights = MLX.softmax(scores, axis: -1)
-    var output = MLX.matmul(weights, values)
-
-    output = output.transposed(0, 2, 1, 3).reshaped(B, L, -1)
     return wo(output)
   }
 }
@@ -174,7 +143,7 @@ class CosyVoice3TransformerBlock: Module {
     _postAttentionLayerNorm.wrappedValue = RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
   }
 
-  func callAsFunction(_ x: MLXArray, mask: MLXArray?, cache: CosyVoice3KVCache?) -> MLXArray {
+  func callAsFunction(_ x: MLXArray, mask: MLXArray?, cache: KVCacheSimple?) -> MLXArray {
     var r = attention(inputLayerNorm(x), mask: mask, cache: cache)
     let h = x + r
     r = mlp(postAttentionLayerNorm(h))
@@ -188,7 +157,7 @@ class CosyVoice3TransformerBlock: Module {
 class CosyVoice3Qwen2ModelInner: Module {
   @ModuleInfo(key: "embed_tokens") var embedTokens: Embedding
 
-  let layers: [CosyVoice3TransformerBlock]
+  @ModuleInfo var layers: [CosyVoice3TransformerBlock]
   @ModuleInfo(key: "norm") var norm: RMSNorm
 
   init(_ config: CosyVoice3Qwen2Config) {
@@ -198,52 +167,27 @@ class CosyVoice3Qwen2ModelInner: Module {
     for _ in 0 ..< config.numHiddenLayers {
       layersArray.append(CosyVoice3TransformerBlock(config))
     }
-    layers = layersArray
+    _layers.wrappedValue = layersArray
 
     _norm.wrappedValue = RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
   }
 
   /// Forward with token input
-  func callAsFunction(_ inputs: MLXArray, cache: [CosyVoice3KVCache]?) -> MLXArray {
+  func callAsFunction(_ inputs: MLXArray, cache: [KVCacheSimple]?) -> MLXArray {
     let h = embedTokens(inputs)
     return forward(embeddings: h, cache: cache)
   }
 
   /// Forward with embedding input (for CosyVoice3)
-  func forward(embeddings: MLXArray, cache: [CosyVoice3KVCache]?) -> MLXArray {
+  func forward(embeddings: MLXArray, cache: [KVCacheSimple]?) -> MLXArray {
     var h = embeddings
 
-    // Create causal mask
-    let mask = createCausalMask(h: h, cache: cache?.first)
-
+    // scaledDotProductAttention handles causal masking internally
     for (i, layer) in layers.enumerated() {
-      h = layer(h, mask: mask, cache: cache?[i])
+      h = layer(h, mask: nil, cache: cache?[i])
     }
 
     return norm(h)
-  }
-
-  /// Create causal attention mask using vectorized MLX operations
-  private func createCausalMask(h: MLXArray, cache: CosyVoice3KVCache?) -> MLXArray? {
-    let T = h.shape[1]
-    if T == 1 {
-      return nil // No mask needed for single token
-    }
-
-    let offset = cache?.offset ?? 0
-    let totalLen = T + offset
-
-    // Vectorized causal mask creation using broadcasting
-    let rows = MLXArray(0 ..< Int32(T)).expandedDimensions(axis: 1)
-    let cols = MLXArray(0 ..< Int32(totalLen)).expandedDimensions(axis: 0)
-
-    // Causal condition: column index <= row index + offset
-    let causalMask = cols .<= (rows + Int32(offset))
-
-    // Convert boolean mask to attention bias: true -> 0, false -> -1e9
-    let mask = MLX.where(causalMask, MLXArray(Float(0)), MLXArray(Float(-1e9)))
-
-    return mask.reshaped(1, 1, T, totalLen)
   }
 }
 
@@ -251,12 +195,12 @@ class CosyVoice3Qwen2ModelInner: Module {
 
 /// Wrapper around Qwen2 model for CosyVoice3
 class CosyVoice3Qwen2Encoder: Module {
-  let model: CosyVoice3Qwen2ModelInner
+  @ModuleInfo var model: CosyVoice3Qwen2ModelInner
   let config: CosyVoice3Qwen2Config
 
   init(config: CosyVoice3Qwen2Config) {
     self.config = config
-    model = CosyVoice3Qwen2ModelInner(config)
+    _model.wrappedValue = CosyVoice3Qwen2ModelInner(config)
   }
 
   /// Access the token embedding layer
@@ -279,8 +223,8 @@ class CosyVoice3Qwen2Encoder: Module {
   }
 
   /// Single step forward with KV cache
-  func forwardOneStep(_ xs: MLXArray, cache: [CosyVoice3KVCache]?) -> (MLXArray, [CosyVoice3KVCache]) {
-    let cacheList = cache ?? (0 ..< config.numHiddenLayers).map { _ in CosyVoice3KVCache() }
+  func forwardOneStep(_ xs: MLXArray, cache: [KVCacheSimple]?) -> (MLXArray, [KVCacheSimple]) {
+    let cacheList = cache ?? (0 ..< config.numHiddenLayers).map { _ in KVCacheSimple() }
 
     let hiddenStates = model.forward(embeddings: xs, cache: cacheList)
 
@@ -446,17 +390,17 @@ class CosyVoice3LM: Module {
     maxLen: Int
   ) throws -> [Int] {
     var outTokens: [Int] = []
-    var cache: [CosyVoice3KVCache]? = nil
+    var cache: [KVCacheSimple]? = nil
     var currentInput = lmInput
 
     print("[LLM] Starting inference: minLen=\(minLen), maxLen=\(maxLen), inputShape=\(lmInput.shape)")
     let startTime = CFAbsoluteTimeGetCurrent()
 
-    for i in 0 ..< maxLen {
-      // Forward one step
-      let (yPred, newCache) = llm.forwardOneStep(currentInput, cache: cache)
-      cache = newCache
+    // Initial forward pass (prefill)
+    var (yPred, newCache) = llm.forwardOneStep(currentInput, cache: cache)
+    cache = newCache
 
+    for i in 0 ..< maxLen {
       // Debug: print progress every 10 tokens or at the start
       if i == 0 || (i + 1) % 10 == 0 {
         let elapsed = CFAbsoluteTimeGetCurrent() - startTime
@@ -487,8 +431,13 @@ class CosyVoice3LM: Module {
       // Add the token
       outTokens.append(topIds)
 
-      // Prepare input for next step
+      // Forward pass for next step
       currentInput = speechEmbedding.weight[topIds].reshaped(1, 1, -1)
+      (yPred, newCache) = llm.forwardOneStep(currentInput, cache: cache)
+      cache = newCache
+
+      // Pipeline: evaluate async while preparing next iteration
+      asyncEval(yPred, cache)
     }
 
     let totalElapsed = CFAbsoluteTimeGetCurrent() - startTime
@@ -548,14 +497,14 @@ class CosyVoice3LM: Module {
     maxLen: Int
   ) throws -> [Int] {
     var outTokens: [Int] = []
-    var cache: [CosyVoice3KVCache]? = nil
+    var cache: [KVCacheSimple]? = nil
     var currentInput = lmInput
 
-    for i in 0 ..< maxLen {
-      // Forward one step
-      let (yPred, newCache) = llm.forwardOneStep(currentInput, cache: cache)
-      cache = newCache
+    // Initial forward pass (prefill)
+    var (yPred, newCache) = llm.forwardOneStep(currentInput, cache: cache)
+    cache = newCache
 
+    for i in 0 ..< maxLen {
       // Get logits for last position
       let lastIdx = yPred.shape[1] - 1
       let logits = llmDecoder(yPred[0..., lastIdx, 0...])
@@ -577,8 +526,13 @@ class CosyVoice3LM: Module {
       // Add the token
       outTokens.append(topIds)
 
-      // Prepare input for next step
+      // Forward pass for next step
       currentInput = speechEmbedding.weight[topIds].reshaped(1, 1, -1)
+      (yPred, newCache) = llm.forwardOneStep(currentInput, cache: cache)
+      cache = newCache
+
+      // Pipeline: evaluate async while preparing next iteration
+      asyncEval(yPred, cache)
     }
 
     return outTokens

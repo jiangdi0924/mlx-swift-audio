@@ -5,6 +5,7 @@
 
 import Foundation
 import MLX
+import MLXLMCommon
 import MLXNN
 
 // MARK: - Qwen3 Attention
@@ -66,13 +67,13 @@ class Qwen3Attention: Module {
   /// - Parameters:
   ///   - x: Input tensor (batch, seq, hiddenSize)
   ///   - mask: Optional attention mask
-  ///   - cache: Optional KV cache (keys, values)
-  /// - Returns: Tuple of (output, new cache)
+  ///   - cache: Optional KV cache
+  /// - Returns: Output tensor
   func callAsFunction(
     _ x: MLXArray,
     mask: MLXArray? = nil,
-    cache: (MLXArray, MLXArray)? = nil
-  ) -> (MLXArray, (MLXArray, MLXArray)) {
+    cache: KVCacheSimple? = nil
+  ) -> MLXArray {
     let (B, L, _) = (x.shape[0], x.shape[1], x.shape[2])
 
     var queries = qProj(x)
@@ -88,19 +89,15 @@ class Qwen3Attention: Module {
     queries = qNorm(queries)
     keys = kNorm(keys)
 
-    // Apply RoPE
-    if let cache {
-      let offset = cache.0.shape[2]
-      queries = rope(queries, offset: offset)
-      keys = rope(keys, offset: offset)
-      keys = MLX.concatenated([cache.0, keys], axis: 2)
-      values = MLX.concatenated([cache.1, values], axis: 2)
-    } else {
-      queries = rope(queries)
-      keys = rope(keys)
-    }
+    // Apply RoPE with cache offset
+    let offset = cache?.offset ?? 0
+    queries = rope(queries, offset: offset)
+    keys = rope(keys, offset: offset)
 
-    let newCache = (keys, values)
+    // Update cache (uses pre-allocated buffers instead of concatenation)
+    if let cache {
+      (keys, values) = cache.update(keys: keys, values: values)
+    }
 
     // Scaled dot-product attention
     let output = scaledDotProductAttention(
@@ -114,7 +111,7 @@ class Qwen3Attention: Module {
     // Reshape and project
     let outputReshaped = output.transposed(0, 2, 1, 3).reshaped([B, L, -1])
 
-    return (oProj(outputReshaped), newCache)
+    return oProj(outputReshaped)
   }
 }
 
@@ -178,16 +175,16 @@ class Qwen3TransformerBlock: Module {
   ///   - x: Input tensor (batch, seq, hiddenSize)
   ///   - mask: Optional attention mask
   ///   - cache: Optional KV cache
-  /// - Returns: Tuple of (output, new cache)
+  /// - Returns: Output tensor
   func callAsFunction(
     _ x: MLXArray,
     mask: MLXArray? = nil,
-    cache: (MLXArray, MLXArray)? = nil
-  ) -> (MLXArray, (MLXArray, MLXArray)) {
+    cache: KVCacheSimple? = nil
+  ) -> MLXArray {
     // Self-attention with pre-norm and residual
     var r = x
     var h = inputLayerNorm(x)
-    let (attnOut, newCache) = selfAttn(h, mask: mask, cache: cache)
+    let attnOut = selfAttn(h, mask: mask, cache: cache)
     h = r + attnOut
 
     // MLP with pre-norm and residual
@@ -196,7 +193,7 @@ class Qwen3TransformerBlock: Module {
     h = mlp(h)
     h = r + h
 
-    return (h, newCache)
+    return h
   }
 }
 
@@ -230,13 +227,13 @@ class Qwen3Model: Module {
   ///   - inputEmbeddings: Pre-computed embeddings (batch, seq, hiddenSize) - optional
   ///   - mask: Optional attention mask
   ///   - cache: Optional KV cache for all layers
-  /// - Returns: Tuple of (hidden states, new cache)
+  /// - Returns: Tuple of (hidden states, updated cache)
   func callAsFunction(
     inputIds: MLXArray? = nil,
     inputEmbeddings: MLXArray? = nil,
     mask: MLXArray? = nil,
-    cache: [(MLXArray, MLXArray)?]? = nil
-  ) -> (MLXArray, [(MLXArray, MLXArray)?]) {
+    cache: [KVCacheSimple]? = nil
+  ) -> (MLXArray, [KVCacheSimple]) {
     var h: MLXArray
     if let embeddings = inputEmbeddings {
       h = embeddings
@@ -257,18 +254,15 @@ class Qwen3Model: Module {
       actualMask = actualMask?.asType(h.dtype)
     }
 
-    // Initialize cache if not provided
-    var actualCache: [(MLXArray, MLXArray)?] = cache ?? Array(repeating: nil, count: layers.count)
+    // Initialize cache if not provided (uses pre-allocated buffers)
+    let cacheList = cache ?? (0 ..< layers.count).map { _ in KVCacheSimple() }
 
     // Process through layers
-    var newCache: [(MLXArray, MLXArray)?] = []
     for (i, layer) in layers.enumerated() {
-      let (layerOut, layerCache) = layer(h, mask: actualMask, cache: actualCache[i])
-      h = layerOut
-      newCache.append(layerCache)
+      h = layer(h, mask: actualMask, cache: cacheList[i])
     }
 
-    return (norm(h), newCache)
+    return (norm(h), cacheList)
   }
 }
 
@@ -303,13 +297,13 @@ class Qwen3ForCausalLM: Module {
   ///   - inputEmbeddings: Pre-computed embeddings - optional
   ///   - mask: Optional attention mask
   ///   - cache: Optional KV cache
-  /// - Returns: Tuple of (logits, new cache)
+  /// - Returns: Tuple of (logits, updated cache)
   func callAsFunction(
     inputIds: MLXArray? = nil,
     inputEmbeddings: MLXArray? = nil,
     mask: MLXArray? = nil,
-    cache: [(MLXArray, MLXArray)?]? = nil
-  ) -> (MLXArray, [(MLXArray, MLXArray)?]) {
+    cache: [KVCacheSimple]? = nil
+  ) -> (MLXArray, [KVCacheSimple]) {
     let (out, newCache) = model(
       inputIds: inputIds,
       inputEmbeddings: inputEmbeddings,
