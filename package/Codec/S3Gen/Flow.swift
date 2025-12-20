@@ -21,6 +21,7 @@ class CausalMaskedDiffWithXvec: Module {
   let onlyMaskLoss: Bool
   let tokenMelRatio: Int
   let preLookaheadLen: Int
+  let nTimesteps: Int
 
   @ModuleInfo(key: "input_embedding") var inputEmbedding: Embedding
   @ModuleInfo(key: "spk_embed_affine_layer") var spkEmbedAffineLayer: Linear
@@ -38,6 +39,7 @@ class CausalMaskedDiffWithXvec: Module {
     onlyMaskLoss: Bool = true,
     tokenMelRatio: Int = 2,
     preLookaheadLen: Int = 3,
+    nTimesteps: Int = 10,
     encoder: UpsampleConformerEncoder,
     decoder: CausalConditionalCFM,
   ) {
@@ -48,6 +50,7 @@ class CausalMaskedDiffWithXvec: Module {
     self.onlyMaskLoss = onlyMaskLoss
     self.tokenMelRatio = tokenMelRatio
     self.preLookaheadLen = preLookaheadLen
+    self.nTimesteps = nTimesteps
 
     _inputEmbedding.wrappedValue = Embedding(embeddingCount: vocabSize, dimensions: inputSize)
     _spkEmbedAffineLayer.wrappedValue = Linear(spkEmbedDim, outputSize)
@@ -57,6 +60,19 @@ class CausalMaskedDiffWithXvec: Module {
   }
 
   /// Inference for streaming TTS
+  ///
+  /// - Parameters:
+  ///   - token: Speech tokens (1, T)
+  ///   - tokenLen: Token lengths (1,)
+  ///   - promptToken: Prompt tokens (1, T_p)
+  ///   - promptTokenLen: Prompt token lengths (1,)
+  ///   - promptFeat: Prompt mel features (1, T_p_mel, D)
+  ///   - promptFeatLen: Prompt feature lengths (1,)
+  ///   - embedding: Speaker embedding (1, spk_embed_dim)
+  ///   - finalize: Whether this is the final chunk
+  ///   - nTimesteps: Number of diffusion timesteps (defaults to self.nTimesteps)
+  ///   - streaming: Whether to use streaming (chunk-based) attention masking
+  /// - Returns: Tuple of (mel_spectrogram, flow_cache)
   func inference(
     token: MLXArray,
     tokenLen: MLXArray,
@@ -66,11 +82,15 @@ class CausalMaskedDiffWithXvec: Module {
     promptFeatLen _: MLXArray,
     embedding: MLXArray,
     finalize: Bool,
+    nTimesteps: Int? = nil,
+    streaming: Bool = false,
   ) -> (MLXArray, MLXArray?) {
     precondition(token.shape[0] == 1, "Batch size must be 1")
 
     // Speaker embedding projection (normalize then project)
-    var embeddingNorm = embedding / MLXLinalg.norm(embedding, axis: 1, keepDims: true)
+    // Add epsilon to prevent division by zero when embedding is zero
+    let norm = MLXLinalg.norm(embedding, axis: 1, keepDims: true)
+    var embeddingNorm = embedding / (norm + 1e-8)
     embeddingNorm = spkEmbedAffineLayer(embeddingNorm)
 
     // Concatenate prompt and new tokens
@@ -93,8 +113,8 @@ class CausalMaskedDiffWithXvec: Module {
     combinedToken = MLX.clip(combinedToken, min: 0, max: numEmbeddings - 1)
     let tokenEmbed = inputEmbedding(combinedToken) * mask
 
-    // Encode
-    var (h, _) = encoder(tokenEmbed, xsLens: combinedTokenLen.asType(.int32))
+    // Encode - pass streaming parameter to encoder for proper attention masking
+    var (h, _) = encoder(tokenEmbed, xsLens: combinedTokenLen.asType(.int32), streaming: streaming)
 
     // Trim lookahead for streaming (unless finalizing)
     if !finalize {
@@ -116,14 +136,15 @@ class CausalMaskedDiffWithXvec: Module {
     let totalLen = melLen1 + melLen2
     let decoderMask = MLXArray.ones([1, 1, totalLen]).asType(h.dtype)
 
-    // Generate mel features
+    // Generate mel features with streaming parameter
     let (feat, _) = decoder(
       mu: h.transposed(0, 2, 1),
       mask: decoderMask,
-      nTimesteps: 10,
+      nTimesteps: nTimesteps ?? self.nTimesteps,
       temperature: 1.0,
       spks: embeddingNorm,
       cond: conds,
+      streaming: streaming,
     )
 
     // Extract only the new portion (after prompt)

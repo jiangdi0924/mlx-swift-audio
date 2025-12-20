@@ -232,6 +232,11 @@ class CausalConditionalCFM: ConditionalCFM {
     super.init(inChannels: inChannels, cfmParams: cfmParams, nSpks: nSpks, spkEmbDim: spkEmbDim, estimator: estimator)
   }
 
+  /// Forward diffusion with fixed noise for causal generation.
+  ///
+  /// - Parameters:
+  ///   - streaming: Unused, kept for API compatibility with flow.py
+  /// - Returns: Tuple of (generated_mel, nil)
   func callAsFunction(
     mu: MLXArray,
     mask: MLXArray,
@@ -239,6 +244,7 @@ class CausalConditionalCFM: ConditionalCFM {
     temperature: Float = 1.0,
     spks: MLXArray? = nil,
     cond: MLXArray? = nil,
+    streaming _: Bool = false,
   ) -> (MLXArray, MLXArray?) {
     let T = mu.shape[2]
     let z = _randNoise[0..., 0..., 0 ..< T] * temperature
