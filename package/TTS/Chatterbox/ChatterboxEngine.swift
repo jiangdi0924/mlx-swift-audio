@@ -58,7 +58,8 @@ public final class ChatterboxEngine: TTSEngine {
   // MARK: - TTSEngine Protocol Properties
 
   public let provider: TTSProvider = .chatterbox
-  public let streamingGranularity: StreamingGranularity = .sentence
+  public let supportedStreamingGranularities: Set<StreamingGranularity> = [.sentence]
+  public let defaultStreamingGranularity: StreamingGranularity = .sentence
   public private(set) var isLoaded: Bool = false
   public private(set) var isGenerating: Bool = false
   public private(set) var isPlaying: Bool = false
